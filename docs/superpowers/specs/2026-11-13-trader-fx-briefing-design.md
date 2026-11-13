@@ -52,7 +52,7 @@ Flux : Python collecte et calcule, écrit `briefing.json`, affiche le résumé ;
 
 - Source : Yahoo, endpoint `v8/finance/chart` (il fournit open, high, low, close ; le endpoint spark n'a que les clôtures et ne suffit pas pour l'ATR et les niveaux). Un appel par symbole, pause de 0,3 s, query2 puis query1 sur 429 ou 5xx, une nouvelle tentative après 5 s sur 429, comme `scan.py`.
 - `fetch_bars(symbols, interval, range) -> (bars, failed)` où `bars[symbol]` est une liste ordonnée de `(timestamp_utc, open, high, low, close)` et `failed` la liste des symboles sans données avec la raison.
-- Trois profils : journalier sur 120 séances pour tous les symboles ; 1 h sur 5 jours et 5 min sur 2 jours uniquement pour les paires en alerte et les majors.
+- Deux profils : journalier (plage `6mo`, environ 125 séances) pour tous les symboles ; 1 h sur 5 jours uniquement pour les paires en alerte et les majors. Pas de barres 5 min : aucune sortie du briefing n'en a besoin.
 - Cache sur disque dans `trader/fx/cache/`, une entrée par (symbole, intervalle, plage). Durées de validité : 6 h pour le journalier, 10 min pour l'intraday. `--no-cache` l'ignore. Une entrée périmée utilisée après un échec réseau est marquée avec son âge.
 - Les barres à valeurs nulles sont supprimées.
 
@@ -98,7 +98,7 @@ Sessions sur la convention du forex, avec heure d'été gérée par `zoneinfo` :
 
 ```
 as_of            horodatage ISO, avec heures Paris et New York
-market_state     "open" | "closed_weekend" | "unknown"
+market_state     "open" | "closed_weekend"
 counts           {requested, fetched, scanned, failed:[{symbol, reason}]}
 data_age         âge du plus ancien cache utilisé, ou null
 calendar         {status, events:[{time_paris, time_ny, currency, title, impact, forecast, previous}]}
