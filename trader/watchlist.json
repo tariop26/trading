@@ -1,0 +1,108 @@
+{
+  "created_by": "trader-scanner",
+  "created_at": "2026-11-13T14:36:51Z",
+  "mode": "daily",
+  "as_of": "2026-11-12 close",
+  "universe": 5932,
+  "scanned": 96,
+  "failed": 0,
+  "source": "yahoo",
+  "filters": {
+    "min_price": 5.0,
+    "min_volume": 1000000
+  },
+  "note": "A scan is a list of charts that match a rule, not a list of stocks to buy.",
+  "hits": [
+    {
+      "symbol": "NVDA",
+      "setups": [
+        "oversold"
+      ],
+      "price": 166.19,
+      "close_date": "2026-11-12",
+      "rsi": 25.8,
+      "volume": 68926919
+    },
+    {
+      "symbol": "AMD",
+      "setups": [
+        "breakout_20d"
+      ],
+      "price": 585.3,
+      "close_date": "2026-11-12",
+      "rsi": 57.5,
+      "volume": 3247816
+    },
+    {
+      "symbol": "AVGO",
+      "setups": [
+        "breakout_20d"
+      ],
+      "price": 364.36,
+      "close_date": "2026-11-12",
+      "rsi": 59.2,
+      "volume": 3168646
+    },
+    {
+      "symbol": "ANET",
+      "setups": [
+        "breakout_20d"
+      ],
+      "price": 206.63,
+      "close_date": "2026-11-12",
+      "rsi": 60.3,
+      "volume": 1028727
+    },
+    {
+      "symbol": "RHI",
+      "setups": [
+        "bull_flag"
+      ],
+      "price": 41.97,
+      "close_date": "2026-11-12",
+      "rsi": 54.7,
+      "volume": 2231941
+    },
+    {
+      "symbol": "PBR",
+      "setups": [
+        "oversold",
+        "oversold_bounce"
+      ],
+      "price": 18.1,
+      "close_date": "2026-11-12",
+      "rsi": 26.2,
+      "volume": 1329162
+    },
+    {
+      "symbol": "LUNR",
+      "setups": [
+        "breakout_20d"
+      ],
+      "price": 13.03,
+      "close_date": "2026-11-12",
+      "rsi": 57.0,
+      "volume": 1363035
+    },
+    {
+      "symbol": "CTVA",
+      "setups": [
+        "oversold"
+      ],
+      "price": 9.19,
+      "close_date": "2026-11-12",
+      "rsi": 24.4,
+      "volume": 1564494
+    },
+    {
+      "symbol": "CDNL",
+      "setups": [
+        "oversold"
+      ],
+      "price": 5.64,
+      "close_date": "2026-11-12",
+      "rsi": 22.2,
+      "volume": 2269290
+    }
+  ]
+}

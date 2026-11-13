@@ -1,0 +1,13 @@
+# Indices - base des CFD indices (valeur de l'indice cash Yahoo). Un symbole par ligne.
+^GSPC|S&P 500
+^NDX|Nasdaq 100
+^DJI|Dow Jones
+^RUT|Russell 2000
+^GDAXI|DAX 40
+^FCHI|CAC 40
+^FTSE|FTSE 100
+^STOXX50E|Euro Stoxx 50
+^N225|Nikkei 225
+^HSI|Hang Seng
+^VIX|VIX (volatilite)
+DX-Y.NYB|Indice dollar DXY

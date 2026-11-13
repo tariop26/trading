@@ -1,0 +1,4 @@
+# Cache et fichiers générés
+trader/fx/cache/
+__pycache__/
+*.pyc

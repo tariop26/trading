@@ -1,0 +1,22 @@
+# Matieres premieres - futures Yahoo (=F). Volume reel disponible.
+# Energie
+CL=F|Petrole WTI
+BZ=F|Petrole Brent
+NG=F|Gaz naturel
+RB=F|Essence RBOB
+HO=F|Fioul de chauffage
+# Metaux
+GC=F|Or
+SI=F|Argent
+PL=F|Platine
+PA=F|Palladium
+HG=F|Cuivre
+# Agricoles
+ZC=F|Mais
+ZW=F|Ble
+ZS=F|Soja
+KC=F|Cafe
+CC=F|Cacao
+SB=F|Sucre
+CT=F|Coton
+LE=F|Boeuf vivant
