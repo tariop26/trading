@@ -70,13 +70,15 @@ Nouvelles unités dans `.claude/skills/trader-fx/` (Python 3, bibliothèque stan
 - RSI : idée haussière, RSI sous 30 : +1, au-dessus de 70 : −1. Idée baissière, RSI au-dessus de 70 : +1, sous 30 : −1.
 - Ordre : score décroissant, puis nombre de déclencheurs décroissant, puis symbole croissant (ordre déterministe).
 
-**Diversification.** Chaque idée porte des expositions (devise, signe). Forex `XXXYYY` : haussière = (+XXX, −YYY), baissière = (−XXX, +YYY). Hors forex : l'exposition est le symbole lui-même (la limite ne s'applique pas). En parcourant les idées dans l'ordre, une idée est écartée si l'une de ses expositions est déjà portée par `max_per_exposure` idées retenues (raison « corrélée à <symbole de la première idée retenue> »). On retient au plus `max_shown` idées ; les suivantes sont écartées (« au-delà des N idées affichées »).
+**Diversification.** Chaque idée porte des expositions (devise, signe). Forex `XXXYYY` : haussière = (+XXX, −YYY), baissière = (−XXX, +YYY). Hors forex : l'exposition est le symbole lui-même (la limite ne s'applique pas). En parcourant les idées dans l'ordre, une idée est écartée si l'une de ses expositions est déjà portée par `max_per_exposure` idées retenues (raison « corrélée à <symbole de la première idée retenue> »). On retient au plus `max_shown` idées ; les suivantes sont écartées (« au-delà des N idées affichées (score S) », S étant le score de l'idée écartée). `ties_at_cutoff` = nombre d'idées écartées par cette limite dont le score égale celui de la dernière idée affichée (0 sinon).
 
 **Plan.** ATR en prix = `last × atr_pct / 100`.
 - Entrée = dernière clôture.
 - Stop = entrée ∓ `stop_atr_mult × ATR` (sous l'entrée pour une idée haussière, au-dessus pour une baissière).
 - Cible = entrée ± `target_r × |entrée − stop|` ; rapport gain/risque = `target_r`.
-- Arrondi : forex au dixième de pip (5 décimales, 3 pour une cotation en JPY), autres instruments à 2 décimales. Le stop est arrondi dans le sens qui l'éloigne de l'entrée, la cible dans le sens qui la rapproche.
+- Arrondi (vague finale) : pas de prix = `10^-decimals` ; forex 5 décimales (3 pour une cotation en JPY) ; autres instruments selon le prix : sous 10, 4 décimales ; sous 100, 3 ; sinon 2. Chaque idée porte `decimals`. Entrée = dernière clôture arrondie au pas le PLUS PROCHE ; stop calculé depuis la clôture NON arrondie puis arrondi en s'éloignant de l'entrée (`floor`/`ceil(round(x/pas, 6))·pas`) ; distance `d = |entrée − stop|` arrondis ; cible = entrée ± `target_r × d`, arrondie en se rapprochant de l'entrée. `reference_price` = entrée arrondie ; la taille est calculée sur l'entrée et le stop arrondis. `rr` reste le `target_r` nominal (réalisé 1,998 à 1,999).
+- Côtés stricts : haussier `stop < entrée < cible`, baissier `cible < entrée < stop`, stop et cible > 0 ; sinon idée écartée (« plan impossible : stop ou cible sous zéro »).
+- Plancher : si `d / entrée × 100 < MIN_STOP_PCT` (constante 0,15) l'idée est écartée (« ATR trop faible : stop dans le bruit ou l'écart de cotation »), jamais dimensionnée.
 - ATR indisponible ou nulle : idée écartée (« ATR indisponible »).
 
 **Pourquoi.** Chaque idée porte la liste des points du score, en français (par exemple « +2 cassure du plus haut 20 j », « +1 tendance haussière », « −1 RSI déjà au-dessus de 70 »).
@@ -89,9 +91,9 @@ Entrées : capital, `risk.per_trade_pct`, `leverage_max`, le plan, les derniers 
 **Forex.** Pip = 0,01 si la devise de cotation est JPY, sinon 0,0001. Lot = 100 000 unités ; pas = 0,01 lot (1 000 unités).
 - Conversion cotation → USD (`q2u`) : 1 si la cotation est USD ; `1 / cours(USD<cotation>=X)` si cette paire existe ; sinon `cours(<cotation>USD=X)` si elle existe ; sinon aucune.
 - Conversion base → USD (`b2u`) : même règle pour la devise de base.
-- `perte_par_unité = |entrée − stop| × q2u` ; `unités = floor(risque_usd / perte_par_unité / 1000) × 1000` ; lots = unités / 100 000.
+- `perte_par_unité = |entrée − stop| × q2u` pour une cotation en USD (`q2u = 1`, exact) et pour les croisées (ni base ni cotation en USD : conversion au cours du jour de l'entrée ; le cours au stop est inconnu, l'écart résiduel est de l'ordre de la distance au stop en %, documenté dans SKILL.md). Pour une paire dont la BASE est l'USD (USDJPY, USDCHF, USDCAD, USDZAR...) : `perte_par_unité = |entrée − stop| / stop` (la cotation se convertit en USD au cours du stop, exact dans les deux sens). `unités = floor(round(risque_usd / perte_par_unité / 1000, 6)) × 1000` ; lots = unités / 100 000. Exemple : USDJPY 150,00, stop 149,25 → perte 0,75/149,25 par unité → 99 000 unités, 0,99 lot, risque 497,49 USD, levier 0,99, valeur du pip 6,6667 ; baissier 150,00 → 153,00 : 25 000 unités, risque 490,20.
 - Plafond de levier : valeur = `unités × b2u` ; si elle dépasse `leverage_max × capital`, les unités sont ramenées au plus grand multiple de 1 000 sous le plafond et `limited_by = "levier"` (sinon `"risque"`).
-- Risque réel = `unités × perte_par_unité` ; levier résultant = valeur / capital (2 décimales) ; valeur du pip par lot = `100 000 × pip × q2u`.
+- Risque réel = `unités × perte_par_unité` ; levier résultant = valeur / capital (2 décimales) ; valeur du pip par lot = `100 000 × pip × q2u` (toujours au cours de l'entrée).
 - Statuts : `ok` ; `too_wide` si moins de 0,01 lot tient dans le risque ; `to_confirm` si `q2u` ou `b2u` est inconnu.
 
 **Indices et matières premières.** `contracts["<symbole>"] = {"usd_per_point": ..., "step": ..., "min": ...}` : `usd_per_point` est la valeur en USD d'un mouvement de 1,0 du prix pour une unité de taille (1 lot).
@@ -99,7 +101,7 @@ Entrées : capital, `risk.per_trade_pct`, `leverage_max`, le plan, les derniers 
 - Valeur = `taille × dernier prix × usd_per_point` ; plafond de levier comme ci-dessus ; levier résultant et risque réel de la même façon.
 - Symbole absent de la table : `to_confirm` (« taille à confirmer chez le courtier »).
 
-**Risque cumulé.** `total_risk_usd` = somme des risques réels des idées en statut `ok` plus, pour celles en `to_confirm`, le risque prévu `risk_usd`. `over_cap` si `total_risk_usd / capital × 100 > max_total_pct`.
+**Risque cumulé.** `total_risk_usd` = somme des risques réels des idées en statut `ok` plus, pour celles en `to_confirm`, le risque prévu `risk_usd`. `over_cap` comparé au centime : `round(total, 2) > round(capital × max_total_pct / 100, 2)`. `max_ideas_within_cap` = plus grand k tel que la somme des k plus grands risques comptés tient dans le plafond (au centime) ; `over_cap` est faux exactement quand k = nombre d'idées comptées. `total_leverage` = somme des leviers des idées `ok` (2 décimales).
 
 ### 4.4 config.py et `trader/fx/config.json`
 
@@ -136,9 +138,12 @@ trade_ideas: {
 ```
 
 (`lots`/`units` pour le forex, `size` pour les autres instruments ; les champs sans objet valent `null`.)
+Clés additives (vague finale) : `account.source` (`"default"` ou `"file"`) ; par idée `decimals` (entier), `last_bar_date` (date ISO de la clôture utilisée, ou `null`) et `since_close` (`null` sans barre 1 h après cette clôture, sinon `{last, stop_crossed, target_crossed}` calculé sur les barres 1 h dont la date UTC est postérieure à `last_bar_date`) ; au niveau de `trade_ideas` : `max_ideas_within_cap`, `ties_at_cutoff`, `total_leverage`.
 `build_briefing` reçoit la configuration et calcule `trade_ideas` à partir des analyses, comme les autres sections (fonction pure).
 
-**fx.py** charge la configuration au début de `brief` ; une `ConfigError` donne une ligne, code 1, sans écrire `briefing.json`.
+**fx.py** charge la configuration au début de `brief` ; une `ConfigError` donne une ligne, code 1, sans écrire `briefing.json`. Un `--config` explicite (différent du chemin par défaut) qui n'existe pas donne « Fichier de configuration introuvable : <chemin>. », code 1, aucun appel réseau ; le chemin par défaut peut être absent (valeurs par défaut, `account.source = "default"`).
+
+**Ligne de compte** (résumé et page) : capital, risque par idée en % et en USD, levier max, suivie de « (valeurs par défaut) » quand `account.source` vaut `"default"`. **Plafond dépassé** : « Risque cumulé au-dessus du plafond : au plus N idées ouvertes en même temps. » (N = `max_ideas_within_cap`) ; résumé : « : dépassé, au plus N idées ouvertes en même temps ».
 
 **Page.** Section « Trades potentiels » juste après l'en-tête, avant « Résumé » : une note (« Idées de plan mécaniques, issues des règles ci-dessous. À valider, pas des conseils. Prix de référence : dernière clôture. »), une carte par idée (rang, symbole et nom, sens, règles, quatre chiffres : entrée, stop, cible, taille ; puis risque maximal en USD, rapport 1:R, levier, valeur du pip, et la liste « Pourquoi »), une ligne de risque cumulé avec un bandeau si `over_cap`, et la liste des idées écartées avec leur raison. Statuts : `to_confirm` affiche « Taille à confirmer chez le courtier » et l'indication de renseigner `contracts` ; `too_wide` affiche « Stop trop large pour le risque fixé ». Zéro idée : message explicite. Le style suit la charte 4884 déjà appliquée (pas d'emoji, pas de bordure latérale, or en accent seulement). Le sens se lit par le mot (« Haussier », « Baissier ») et pas par la couleur seule.
 
@@ -149,7 +154,7 @@ trade_ideas: {
 - Configuration invalide : une ligne, code 1, aucun fichier écrit.
 - Taille non calculable : statut `to_confirm`, jamais de chiffre inventé.
 - Week-end ou données périmées : le bandeau existant s'applique ; la note de la section rappelle que l'entrée est la dernière clôture à revalider.
-- Un symbole dont le calcul lève une exception arithmétique est écarté avec sa raison, sans arrêter le briefing.
+- Un symbole dont le calcul lève une exception arithmétique est écarté avec sa raison, sans arrêter le briefing. Dans `plan.py`, le plan et la taille de chaque candidat sont protégés par `try/except ArithmeticError` : l'idée est écartée (« calcul impossible (<TypeErreur>) », groupe des écarts précoces, ordre d'entrée).
 - Aucune idée : `ideas` vide, message explicite, le reste du briefing est inchangé.
 
 ## 6. Tests

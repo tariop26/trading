@@ -24,7 +24,7 @@ FIXTURE = os.path.join(HERE, "fixtures", "briefing_sample.json")
 UNIVERSE = [("EURUSD=X", "EUR/USD"), ("GBPUSD=X", "GBP/USD"), ("AUDUSD=X", "AUD/USD"),
             ("USDCAD=X", "USD/CAD"), ("NZDUSD=X", "NZD/USD"), ("USDJPY=X", "USD/JPY"),
             ("USDCHF=X", "USD/CHF"), ("USDSEK=X", "USD/SEK"), ("GC=F", "Or"),
-            ("CL=F", "Pétrole WTI"), ("^FCHI", "CAC 40")]
+            ("CL=F", "Pétrole WTI"), ("^FCHI", "CAC 40"), ("^GDAXI", "DAX")]
 
 # the Yahoo calendar rows of the week, as economic_calendar produces them
 EVENTS = [
@@ -58,20 +58,33 @@ def overbought_pullback(base, n=55):
 
 
 def hourly_eurusd():
+    """1 h bars of the day after the close, inside the EURUSD plan (nothing crossed)."""
     t0 = int(datetime(2026, 11, 10, tzinfo=timezone.utc).timestamp())
-    base = 1.1520
+    base = 1.1890
     return data.Series(bars=[(t0 + h * 3600, base, base * (1.0007 + h * 0.0001),
                               base * 0.9994, base * (1 + 0.0002 * math.sin(h)))
                              for h in range(10)], gmtoffset=0)
 
 
+def hourly_fchi():
+    """1 h bars of the day after the close that fall through the ^FCHI stop."""
+    t0 = int(datetime(2026, 11, 10, 8, tzinfo=timezone.utc).timestamp())
+    closes = [8180.0, 8160.0, 8140.0, 8120.0, 8110.0]
+    return data.Series(bars=[(t0 + h * 3600, c + 10, c + 15, c - 5, c)
+                             for h, c in enumerate(closes)], gmtoffset=0)
+
+
 def build_sample():
     """The sample briefing: 3 ideas (ok forex bullish, to_confirm bullish, too_wide bearish),
-    1 skipped idea, 1 short-only hit, a partial calendar, one failed symbol."""
+    2 skipped ideas (one correlated, one beyond the display limit with the same score as
+    the last shown: ties_at_cutoff 1), the cumulated risk over a 0.75 % cap, 1 h bars
+    after the close on two ideas (the ^FCHI stop already crossed), the default account
+    (source "default"), 1 short-only hit, a partial calendar, one failed symbol."""
     bases = {"EURUSD=X": 1.0852, "GBPUSD=X": 1.2644, "AUDUSD=X": 0.6531,
              "USDCAD=X": 1.3912, "NZDUSD=X": 0.5918, "USDJPY=X": 151.84,
-             "USDCHF=X": 0.8827, "GC=F": 4012.5, "CL=F": 71.4, "^FCHI": 7480.0}
-    shape = {"EURUSD=X": rising, "GBPUSD=X": rising, "^FCHI": rising,
+             "USDCHF=X": 0.8827, "GC=F": 4012.5, "CL=F": 71.4, "^FCHI": 7480.0,
+             "^GDAXI": 19500.0}
+    shape = {"EURUSD=X": rising, "GBPUSD=X": rising, "^FCHI": rising, "^GDAXI": rising,
              "CL=F": overbought_pullback}
     daily = {sym: tb.series((shape.get(sym, calm))(base), end=date(2026, 11, 9))
              for sym, base in bases.items()}
@@ -80,10 +93,13 @@ def build_sample():
            "reason": "next week: pas encore publié (HTTP 404)"}
     cfg = config.defaults()
     cfg["ideas"]["max_per_exposure"] = 1          # GBPUSD shares the short USD leg of EURUSD
+    cfg["ideas"]["max_shown"] = 3                 # ^GDAXI ties with the last shown idea
+    cfg["risk"]["max_total_pct"] = 0.75           # 497 + 500 counted > 750: over the cap
     cfg["contracts"] = {"CL=F": {"usd_per_point": 1000, "step": 1, "min": 1}}   # 1 lot minimum
-    extra = ["Barres 1 h indisponibles pour 2 symbole(s) en alerte (^FCHI, CL=F) : "
+    extra = ["Barres 1 h indisponibles pour 2 symbole(s) en alerte (CL=F, ^GDAXI) : "
              "plage asiatique non calculée."]
-    return briefing.build_briefing(UNIVERSE, daily, failed, {"EURUSD=X": hourly_eurusd()},
+    hourly = {"EURUSD=X": hourly_eurusd(), "^FCHI": hourly_fchi()}
+    return briefing.build_briefing(UNIVERSE, daily, failed, hourly,
                                    cal, tb.TUE, extra_warnings=extra, config=cfg)
 
 

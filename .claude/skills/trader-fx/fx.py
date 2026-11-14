@@ -81,7 +81,12 @@ def cmd_brief(args, deps):
     else:
         now_utc = datetime.now(timezone.utc)
 
-    try:                      # before the lists and any network call
+    # before the lists and any network call. An explicit --config path must exist;
+    # the default path may be absent (the defaults apply).
+    if args.config != DEFAULT_CONFIG and not os.path.exists(args.config):
+        return _fail("Fichier de configuration introuvable : %s." % args.config)
+    config_source = "file" if args.config and os.path.exists(args.config) else "default"
+    try:
         cfg = fxconfig.load_config(args.config)
     except fxconfig.ConfigError as e:
         return _fail(str(e))
@@ -123,7 +128,8 @@ def cmd_brief(args, deps):
 
     calendar = fetch_calendar()
     b = briefing.build_briefing(universe, daily, failed, hourly, calendar, now_utc,
-                                extra_warnings=extra, config=cfg)
+                                extra_warnings=extra, config=cfg,
+                                config_source=config_source)
 
     try:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)

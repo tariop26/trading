@@ -3,7 +3,7 @@
 build_briefing() is pure: bars, a calendar and a clock go in, a plain dict comes
 out. Nothing here reads the network, the disk or the real clock.
 """
-from datetime import timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import config as fxconfig
@@ -43,7 +43,7 @@ def read_list(path):
             if not line or line.startswith("#"):
                 continue
             sym, _, name = line.partition("|")
-            sym, name = sym.strip(), name.strip()
+            sym, name = sym.strip().upper(), name.strip()
             if sym:
                 out.append((sym, name or sym))
     return out
@@ -98,6 +98,33 @@ def _hit(a):
     return out
 
 
+def since_close(idea, hourly):
+    """What the 1 h bars say after the close the idea is based on.
+
+    Keeps the bars (ts_utc, o, h, l, c) of `hourly` whose UTC date is strictly after
+    idea["last_bar_date"]. None when there is no such bar (no hourly data, or none
+    after the close, e.g. on a weekend). Otherwise {"last", "stop_crossed",
+    "target_crossed"}: haussier -> lowest low <= stop, highest high >= target;
+    baissier -> highest high >= stop, lowest low <= target. Approximation:
+    last_bar_date is the symbol's local date, compared with UTC dates."""
+    if hourly is None or not idea.get("last_bar_date"):
+        return None
+    close_day = date.fromisoformat(idea["last_bar_date"])
+    after = sorted((b for b in hourly.bars
+                    if datetime.fromtimestamp(b[0], timezone.utc).date() > close_day),
+                   key=lambda b: b[0])
+    if not after:
+        return None
+    high = max(b[2] for b in after)
+    low = min(b[3] for b in after)
+    if idea["side"] == plan.LONG:
+        stop_crossed, target_crossed = low <= idea["stop"], high >= idea["target"]
+    else:
+        stop_crossed, target_crossed = high >= idea["stop"], low <= idea["target"]
+    return {"last": after[-1][4], "stop_crossed": bool(stop_crossed),
+            "target_crossed": bool(target_crossed)}
+
+
 def join_names(symbols):
     shown = ", ".join(symbols[:LIST_LIMIT])
     if len(symbols) > LIST_LIMIT:
@@ -110,9 +137,10 @@ def _hours(seconds):
 
 
 def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_warnings=(),
-                   config=None):
+                   config=None, config_source="default"):
     """`config` is a validated configuration dict (see config.load_config); None
-    means the defaults."""
+    means the defaults. `config_source` ("default" or "file") says where it came
+    from; it is copied to trade_ideas.account.source."""
     cfg = fxconfig.defaults() if config is None else config
     if now_utc.tzinfo is None or now_utc.utcoffset() is None:
         raise ValueError("now_utc must be timezone-aware")
@@ -154,6 +182,11 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
     if status != "ok":
         label = "indisponible" if status == "unavailable" else "partiel"
         warnings.append("Calendrier économique %s : %s." % (label, reason or "raison inconnue"))
+    requested = {s for s, _ in universe}
+    for key in cfg.get("contracts") or {}:
+        if key not in requested or strength.pair_currencies(key) is not None:
+            warnings.append("contracts : %s ne correspond à aucun instrument analysé ou "
+                            "est une paire forex : ignorée." % key)
     warnings.extend(extra_warnings)
 
     # calendar: high impact, currencies of the analysed symbols
@@ -186,6 +219,11 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
         row["asia_complete"] = asia["asia_complete"] if asia else None
         levels.append(row)
 
+    trade_ideas = plan.build_trade_ideas(analyses, cfg)
+    trade_ideas["account"]["source"] = config_source
+    for idea in trade_ideas["ideas"]:
+        idea["since_close"] = since_close(idea, hourly.get(idea["symbol"]))
+
     paris = now_utc.astimezone(sessions.PARIS)
     ny = now_utc.astimezone(sessions.NEW_YORK)
     return {
@@ -201,7 +239,7 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
         "strength": {"windows": windows},
         "swing": {"hits": hits, "clusters": strength.clusters(hits)},
         "day_plan": {"sessions": table, "levels": levels, "events_24h": events_24h},
-        "trade_ideas": plan.build_trade_ideas(analyses, cfg),
+        "trade_ideas": trade_ideas,
         "warnings": warnings,
         "disclaimer": DISCLAIMER,
     }
@@ -250,24 +288,61 @@ def _price(v):
     return text
 
 
-def _size_text(size):
+def _plan_price(v, decimals):
+    """A plan price with the idea's fixed decimals (trailing zeros kept)."""
+    if isinstance(decimals, int) and not isinstance(decimals, bool) and 0 <= decimals <= 12:
+        return "%.*f" % (decimals, v)
+    return _price(v)
+
+
+def _compact(v):
+    """%g-style number: 0.5, 2, 30, 0.25."""
+    return "%g" % v
+
+
+def _capital(v):
+    return "%d" % v if float(v).is_integer() else "%.2f" % v
+
+
+def _size_text(size, account):
     """(size words, whether the risk is shown) for one idea line."""
     if size["status"] == "too_wide":
         return "stop trop large", False
     if size["status"] != "ok":
-        return "taille à confirmer", False
+        planned = account.get("risk_per_trade_usd")
+        if planned is None:
+            return "taille à confirmer", False
+        return "taille à confirmer  risque prévu %.2f USD" % planned, False
     if size.get("lots") is not None:
         return "%.2f lot" % size["lots"], True
     return "taille %s" % _price(size["size"]), True
 
 
-def _idea_line(idea):
-    words, with_risk = _size_text(idea["size"])
+def _idea_line(idea, account):
+    words, with_risk = _size_text(idea["size"], account)
+    d = idea.get("decimals")
     text = "  %d. %s %s  entrée %s  stop %s  cible %s  %s" % (
-        idea["rank"], idea["symbol"], idea["side"], _price(idea["reference_price"]),
-        _price(idea["stop"]), _price(idea["target"]), words)
+        idea["rank"], idea["symbol"], idea["side"], _plan_price(idea["reference_price"], d),
+        _plan_price(idea["stop"], d), _plan_price(idea["target"], d), words)
     if with_risk:
         text += "  risque %.2f USD" % idea["size"]["risk_usd"]
+    sc = idea.get("since_close") or {}
+    if sc.get("stop_crossed"):
+        text += "  stop déjà franchi"
+    if sc.get("target_crossed"):
+        text += "  cible déjà atteinte"
+    return _cut(text)
+
+
+def _ideas_header(ti):
+    acc = ti["account"]
+    text = ("Idées de trade (%d), plan mécanique à valider. Compte %s USD, risque %s %% par "
+            "idée (%.2f USD), levier max %s:1" % (
+                len(ti["ideas"]), _capital(acc["capital"]),
+                _compact(acc["risk_per_trade_usd"] / acc["capital"] * 100.0),
+                acc["risk_per_trade_usd"], _compact(acc["leverage_max"])))
+    if acc.get("source", "default") == "default":
+        text += " (valeurs par défaut)"
     return _cut(text)
 
 
@@ -277,14 +352,24 @@ def _idea_lines(b):
     ideas = ti["ideas"]
     if not ideas:
         return ["Idées de trade : aucune"]
-    out = ["Idées de trade (%d), plan mécanique à valider :" % len(ideas)]
+    out = [_ideas_header(ti)]
     shown = ideas if len(ideas) <= IDEA_ROWS else ideas[:IDEA_ROWS - 1]
-    out += [_idea_line(i) for i in shown]
+    out += [_idea_line(i, ti["account"]) for i in shown]
     if len(shown) < len(ideas):
         out.append("  ... et %d autres (voir briefing.json)" % (len(ideas) - len(shown)))
-    out.append(_cut("  Risque cumulé : %.2f USD (%.2f %%) sur %s %% autorisés%s" % (
-        ti["total_risk_usd"], ti["total_risk_pct"], str(float(ti["max_total_pct"])),
-        " : dépassé" if ti["over_cap"] else "")))
+    risk = "  Risque cumulé : %.2f USD (%.2f %%) sur %s %% autorisés" % (
+        ti["total_risk_usd"], ti["total_risk_pct"], str(float(ti["max_total_pct"])))
+    if ti["over_cap"]:
+        n = ti.get("max_ideas_within_cap")
+        if n is None:
+            risk += " : dépassé"
+        elif n <= 1:
+            risk += " : dépassé, au plus %d idée ouverte en même temps" % n
+        else:
+            risk += " : dépassé, au plus %d idées ouvertes en même temps" % n
+    if any(i["size"]["status"] == "ok" for i in ideas):
+        risk += " · levier cumulé ×%.2f" % ti.get("total_leverage", 0.0)
+    out.append(_cut(risk))
     return out
 
 

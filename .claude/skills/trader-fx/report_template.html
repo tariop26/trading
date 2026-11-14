@@ -181,6 +181,9 @@
   .skipped { margin: 0; padding: 0 0 0 1.1rem; font-size: 0.875rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
   .callout { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; line-height: 1.55; font-weight: 600; overflow-wrap: anywhere; }
   .total { color: var(--ink); font-weight: 600; font-size: 0.9375rem; overflow-wrap: anywhere; }
+  /* a plan already void (stop crossed since the close): the stale-band palette, bold, and
+     the sentence itself says it, so the colour is never the only signal */
+  .void { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--band-stale-line); background: var(--band-stale-bg); color: var(--band-stale-ink); font-size: 0.875rem; line-height: 1.55; font-weight: 700; overflow-wrap: anywhere; }
 
   ul.warnings { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
   ul.warnings li { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; line-height: 1.55; overflow-wrap: anywhere; }
@@ -262,6 +265,9 @@
   var MSG_TO_CONFIRM = "Taille à confirmer chez le courtier";
   var MSG_TOO_WIDE = "Stop trop large pour le risque fixé";
   var MSG_OVER_CAP = "Risque cumulé au-dessus du plafond : n'ouvrez pas toutes ces idées en même temps.";
+  var MSG_RISK_NOTE = "Le risque au stop vaut pour l'entrée affichée, sans écart d'ouverture ni glissement.";
+  var MSG_VOID = "Stop déjà franchi depuis la clôture : plan caduc.";
+  var MSG_REACHED = "Cible déjà atteinte depuis la clôture.";
   var TREND_LABELS = { up: "haussière", down: "baissière", mixed: "mixte" };
   var FAMILIES = [["forex", "Forex"], ["commodities", "Matières premières"], ["indices", "Indices"]];
   var STALE_HOURS = 12;
@@ -525,30 +531,49 @@
 
   function isNum(v) { return typeof v === "number" && isFinite(v); }
   function trimmed(v, d) { return String(Number(v.toFixed(d))); }
-  function spaced(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " "); }
+  // thousands separated by a no-break space (U+00A0) so "62 000" never breaks
+  function spaced(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0"); }
+  function money(n) { return Number.isInteger(n) ? spaced(n) : spaced(Math.trunc(n)) + (Math.abs(n) % 1).toFixed(2).slice(1); }
+  function count(v) { return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0; }
 
-  // the decimals of the plan itself: forex to a tenth of a pip (3 decimals on a JPY quote,
-  // else 5), every other instrument to 2
-  function planPrice(symbol, v) {
+  // the decimals carried by the idea (the tick of its plan); without them, the old rule:
+  // forex 5 (3 on a JPY quote), every other instrument 2
+  function planPrice(idea, v) {
     if (!isNum(v)) { return "n/a"; }
-    var s = String(symbol || "");
+    var d = idea.decimals;
+    if (typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 10) { return v.toFixed(d); }
+    var s = String(idea.symbol || "");
     return v.toFixed(family(s) !== "forex" ? 2 : s.slice(3, 6) === "JPY" ? 3 : 5);
   }
 
   function sizeValue(size) {
-    if (size.status !== "ok") { return "n/a"; }
     if (isNum(size.lots) && isNum(size.units)) {
-      return fixed(size.lots, 2) + " lot (" + spaced(size.units) + " unités)";
+      return fixed(size.lots, 2) + (size.lots < 2 ? " lot (" : " lots (") + spaced(size.units) + " unités)";
     }
-    if (isNum(size.size)) { return "taille " + trimmed(size.size, 6); }
+    if (isNum(size.size)) { return trimmed(size.size, 6); }
     return "n/a";
+  }
+
+  // the part of a to_confirm note that does not repeat the headline
+  function confirmDetail(note) {
+    var s = String(note);
+    var i = s.indexOf(": ");
+    if (i >= 0 && s.slice(0, i).trim().toLowerCase() === MSG_TO_CONFIRM.toLowerCase()) {
+      return s.slice(i + 2);
+    }
+    return s;
   }
 
   function ideaCard(idea, account) {
     var size = obj(idea.size);
     var side = idea.side === "haussier" ? " up" : idea.side === "baissier" ? " down" : "";
-    var taille = stat("Taille", sizeValue(size));
-    taille.className = "stat wide";
+    var taille = null;
+    if (size.status === "ok") {
+      taille = stat("Taille", sizeValue(size));
+      taille.className = "stat wide";
+    }
+    var closeDate = typeof idea.last_bar_date === "string" && idea.last_bar_date
+      ? h("span", "note", "clôture du " + idea.last_bar_date) : null;
     var out = [
       h("div", "idea-head",
         h("span", "rank", "N° " + text(idea.rank)),
@@ -558,27 +583,35 @@
     ];
     if (list(idea.setups).length) { out.push(setupTags(idea.setups)); }
     out.push(h("dl", "nums",
-      stat("Entrée", planPrice(idea.symbol, idea.reference_price)),
-      stat("Stop", planPrice(idea.symbol, idea.stop)),
-      stat("Cible", planPrice(idea.symbol, idea.target)),
+      stat("Entrée", planPrice(idea, idea.reference_price), closeDate),
+      stat("Stop", planPrice(idea, idea.stop)),
+      stat("Cible", planPrice(idea, idea.target)),
       taille));
+
+    var since = obj(idea.since_close);
+    if (isNum(since.last)) {
+      out.push(h("p", "note", "Dernier cours 1 h : " + planPrice(idea, since.last)));
+    }
+    if (since.stop_crossed === true) { out.push(h("p", "void", MSG_VOID)); }
+    if (since.target_crossed === true) { out.push(h("p", "callout", MSG_REACHED)); }
 
     var facts = [];
     if (size.status === "ok") {
-      facts.push(stat("Risque maximal (USD)", fixed(size.risk_usd, 2)));
+      facts.push(stat("Risque au stop (USD)", fixed(size.risk_usd, 2)));
     }
     facts.push(stat("Rapport", isNum(idea.rr) ? "1:" + trimmed(idea.rr, 2) : "n/a"));
     if (size.status === "ok") {
       facts.push(stat("Levier", isNum(size.leverage) ? "×" + trimmed(size.leverage, 3) : "n/a"));
       if (isNum(size.pip_value_usd_per_lot)) {
-        facts.push(stat("Valeur du pip par lot", fixed(size.pip_value_usd_per_lot, 2) + " USD"));
+        var pip = size.pip_value_usd_per_lot;
+        facts.push(stat("Valeur du pip par lot", fixed(pip, Math.abs(pip) < 0.01 ? 4 : 2) + " USD"));
       }
     }
     out.push(h.apply(null, ["dl", "facts"].concat(facts)));
 
     if (size.status === "to_confirm") {
       out.push(h("p", "size-msg", MSG_TO_CONFIRM));
-      if (has(size.note)) { out.push(h("p", "note", String(size.note))); }
+      if (has(size.note)) { out.push(h("p", "note", confirmDetail(size.note))); }
       if (isNum(account.risk_per_trade_usd)) {
         out.push(h("p", "note", "Risque prévu : " + fixed(account.risk_per_trade_usd, 2) + " USD"));
       }
@@ -600,21 +633,49 @@
     return h.apply(null, ["article", "panel idea"].concat(out));
   }
 
+  function accountText(account) {
+    var cap = account.capital, usd = account.risk_per_trade_usd, lev = account.leverage_max;
+    if (!isNum(cap) && !isNum(usd) && !isNum(lev)) { return ""; }
+    var parts = ["Compte : " + (isNum(cap) ? money(cap) + " USD" : "n/a")];
+    if (isNum(usd)) {
+      parts.push("risque par idée " + (isNum(cap) && cap > 0 ? trimmed(usd / cap * 100, 4) + " % (" : "(") +
+        fixed(usd, 2) + " USD)");
+    }
+    if (isNum(lev)) { parts.push("levier max " + trimmed(lev, 2) + ":1"); }
+    return parts.join(" · ") + (account.source === "default" ? " (valeurs par défaut)" : "");
+  }
+
+  function overCapText(ti) {
+    var n = ti.max_ideas_within_cap;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) { return MSG_OVER_CAP; }
+    return "Risque cumulé au-dessus du plafond : au plus " +
+      (n > 1 ? n + " idées ouvertes" : n + " idée ouverte") + " en même temps.";
+  }
+
   function renderIdeas(b) {
     var ti = obj(b.trade_ideas);
     var account = obj(ti.account);
     var ideas = list(ti.ideas).filter(function (i) { return i && typeof i === "object"; });
     var out = [h("p", "note", IDEAS_NOTE)];
+    var accountLine = accountText(account);
+    if (accountLine) { out.push(h("p", "note", accountLine)); }
 
     if (!ideas.length) {
       out.push(empty("Aucune idée de trade sur cette analyse."));
     } else {
+      out.push(h("p", "note", MSG_RISK_NOTE));
       if (isNum(ti.total_risk_usd) && isNum(ti.total_risk_pct)) {
         out.push(h("p", "total", "Risque cumulé : " + fixed(ti.total_risk_usd, 2) + " USD (" +
           fixed(ti.total_risk_pct, 2) + " %)" +
-          (isNum(ti.max_total_pct) ? " sur " + trimmed(ti.max_total_pct, 2) + " % autorisés" : "")));
+          (isNum(ti.max_total_pct) ? " sur " + trimmed(ti.max_total_pct, 2) + " % autorisés" : "") +
+          (isNum(ti.total_leverage) && ti.total_leverage > 0 ? " · levier cumulé ×" + fixed(ti.total_leverage, 2) : "")));
       }
-      if (ti.over_cap === true) { out.push(h("p", "callout", MSG_OVER_CAP)); }
+      if (ti.over_cap === true) { out.push(h("p", "callout", overCapText(ti))); }
+      var ties = count(ti.ties_at_cutoff);
+      if (ties) {
+        out.push(h("p", "note", (ties > 1 ? ties + " autres idées ont" : "1 autre idée a") +
+          " le même score que la dernière affichée ; à score égal, l'ordre est alphabétique."));
+      }
       var grid = h("div", "ideas");
       ideas.forEach(function (idea) { grid.append(ideaCard(idea, account)); });
       out.push(grid);

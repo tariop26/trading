@@ -25,7 +25,12 @@ FORBIDDEN_WORDS = tb.FORBIDDEN_WORDS
 IDEAS_NOTE = ("Idées de plan mécaniques, issues des règles ci-dessous. À valider, pas des "
               "conseils. Prix de référence : dernière clôture.")
 OVER_CAP_BANNER = ("Risque cumulé au-dessus du plafond : n'ouvrez pas toutes ces idées en "
-                   "même temps.")
+                   "même temps.")      # the fallback when max_ideas_within_cap is absent
+NBSP = "\u00a0"
+RISK_NOTE = ("Le risque au stop vaut pour l'entrée affichée, sans écart d'ouverture ni "
+             "glissement.")
+VOID = "Stop déjà franchi depuis la clôture : plan caduc."
+REACHED = "Cible déjà atteinte depuis la clôture."
 NEW_LABELS = (("breakdown_20d", "Cassure du plus bas 20 j"),
               ("bear_flag", "Drapeau baissier"),
               ("lose_ma20", "Perte de la moyenne 20 j"),
@@ -446,6 +451,7 @@ class TestCharte4884(unittest.TestCase):
             (".callout", "--warn-ink", "--warn-bg"),
             (".total", "--ink", "--bg"),
             (".skipped", "--ink", "--bg"),
+            (".void", "--band-stale-ink", "--band-stale-bg"),
         )
         for selector, fg, bg in pairs:
             rule = css_block(t, selector)
@@ -455,6 +461,9 @@ class TestCharte4884(unittest.TestCase):
                 self.assertGreaterEqual(contrast(tok[fg], tok[bg]), 4.5,
                                         "%s %s on %s (%s)" % (selector, fg, bg, name))
         self.assertEqual(css_block(t, ".callout").get("background"), "var(--warn-bg)")
+        self.assertEqual(css_block(t, ".void").get("background"), "var(--band-stale-bg)")
+        self.assertIn("var(--band-stale-line)", css_block(t, ".void").get("border", ""))
+        self.assertEqual(css_block(t, ".void").get("font-weight"), "700")
         self.assertIn("var(--warn-line)", css_block(t, ".callout").get("border", ""))
         self.assertEqual(css_block(t, ".panel").get("background"), "var(--surface)")
         # the two dots are graphics: 3:1 against the card
@@ -634,10 +643,9 @@ class TestInlineScriptRuns(unittest.TestCase):
         return next(i for i in b["trade_ideas"]["ideas"] if i["symbol"] == symbol)
 
     @staticmethod
-    def px(symbol, v):
-        """The plan's decimals: forex 5 (3 on a JPY quote), anything else 2."""
-        forex = re.match(r"^[A-Z]{6}=X$", symbol) is not None
-        return "%.*f" % ((3 if symbol[3:6] == "JPY" else 5) if forex else 2, v)
+    def px(idea, v):
+        """The plan's own decimals, carried by the idea."""
+        return "%.*f" % (idea["decimals"], v)
 
     def test_ideas_heading_and_note(self):
         out = self.run_node()
@@ -652,8 +660,8 @@ class TestInlineScriptRuns(unittest.TestCase):
                          ["ok", "to_confirm", "too_wide"])
         self.assertEqual(self.idea(b, "EURUSD=X")["size"]["status"], "ok")
         self.assertEqual({i["side"] for i in ti["ideas"]}, {"haussier", "baissier"})
-        self.assertEqual(len(ti["skipped"]), 1)
-        self.assertFalse(ti["over_cap"])
+        self.assertEqual(len(ti["skipped"]), 2)
+        self.assertTrue(ti["over_cap"])
         self.assertTrue(any(not h["setups"] and h["setups_short"]
                             for h in b["swing"]["hits"]))   # a short-only hit
 
@@ -667,10 +675,10 @@ class TestInlineScriptRuns(unittest.TestCase):
         self.assertEqual(tags.count("article"), 3)       # one card per idea
         for text in ("N° %d" % eur["rank"], "EURUSD=X", "EUR/USD", "Haussier",
                      "Entrée", "Stop", "Cible", "Taille",
-                     self.px("EURUSD=X", eur["reference_price"]),
-                     self.px("EURUSD=X", eur["stop"]), self.px("EURUSD=X", eur["target"]),
-                     "1.00 lot (100 000 unités)",
-                     "Risque maximal (USD)", "487.00", "1:2", "×1.19",
+                     self.px(eur, eur["reference_price"]),
+                     self.px(eur, eur["stop"]), self.px(eur, eur["target"]),
+                     "1.00 lot (100" + NBSP + "000 unités)",
+                     "Risque au stop (USD)", "487.00", "1:2", "×1.19",
                      "Valeur du pip par lot", "10.00 USD"):
             self.assertIn(text, out)
         for line in eur["why"]:
@@ -695,9 +703,10 @@ class TestInlineScriptRuns(unittest.TestCase):
             "why": ["+2 drapeau haussier"]}]
         b["trade_ideas"]["skipped"] = []
         out = self.run_node(b)
-        for text in ("GC=F", "taille 0.08", "498.00", "1:2.5", "×0.321",
+        for text in ("GC=F", "Taille 0.08", "498.00", "1:2.5", "×0.321",
                      "4012.50", "3950.25", "4136.75", "Drapeau haussier"):
             self.assertIn(text, out)
+        self.assertNotIn("taille 0.08", out)      # the word is not repeated in the value
         self.assertNotIn("Valeur du pip par lot", out)
         self.assertNotIn("unités", out)
         self.assertNotIn("lot (", out)
@@ -715,7 +724,7 @@ class TestInlineScriptRuns(unittest.TestCase):
                      "limited_by": "risque", "note": None},
             "why": []}]
         out = self.run_node(b)
-        for text in ("151.840", "152.607", "150.306", "0.50 lot (50 000 unités)",
+        for text in ("151.840", "152.607", "150.306", "0.50 lot (50" + NBSP + "000 unités)",
                      "6.59 USD", "Perte de la moyenne 20 j", "Baissier"):
             self.assertIn(text, out)
         self.assertNotIn("Pourquoi", out)         # no why lines, no empty list
@@ -741,31 +750,43 @@ class TestInlineScriptRuns(unittest.TestCase):
         confirm = self.idea(b, "^FCHI")["size"]
         wide = self.idea(b, "CL=F")["size"]
         self.assertEqual((confirm["status"], wide["status"]), ("to_confirm", "too_wide"))
-        self.assertIn("Taille à confirmer chez le courtier", out)
-        self.assertIn(confirm["note"], out)
-        self.assertIn("renseigner contracts", out)
+        self.assertEqual(out.count("Taille à confirmer chez le courtier"), 1)   # once
+        self.assertEqual(confirm["note"], "taille à confirmer chez le courtier : renseigner "
+                                          "contracts dans trader/fx/config.json")
+        self.assertIn("renseigner contracts dans trader/fx/config.json", out)
+        self.assertNotIn("taille à confirmer chez le courtier :", out)
         self.assertIn("Risque prévu : 500.00 USD", out)
         self.assertIn("Stop trop large pour le risque fixé", out)
         # the planned risk belongs to the to_confirm idea only, so the displayed figures
         # add up to the cumulated total
         self.assertEqual(out.count("Risque prévu"), 1)
-        shown = [float(m) for m in re.findall(r"Risque maximal \(USD\)\s+(\d+\.\d\d)", out)]
+        shown = [float(m) for m in re.findall(r"Risque au stop \(USD\)\s+(\d+\.\d\d)", out)]
         planned = [float(m) for m in re.findall(r"Risque prévu : (\d+\.\d\d) USD", out)]
         self.assertAlmostEqual(sum(shown) + sum(planned),
                                b["trade_ideas"]["total_risk_usd"], places=2)
         # no size, no lots for either
-        self.assertEqual(out.count("Risque maximal (USD)"), 1)   # the ok idea only
+        self.assertEqual(out.count("Risque au stop (USD)"), 1)   # the ok idea only
+        self.assertNotIn("Risque maximal", out)
 
     def test_total_risk_line_and_over_cap_banner(self):
         b = sample()
-        out = self.run_node(b)
-        self.assertIn("Risque cumulé : 997.51 USD (1.00 %) sur 2 % autorisés", out)
-        self.assertNotIn(OVER_CAP_BANNER, out)
-        self.assertNotIn("au-dessus du plafond", out)
         ti = b["trade_ideas"]
-        ti.update(over_cap=True, total_risk_usd=2500.0, total_risk_pct=2.5)
+        self.assertEqual((ti["over_cap"], ti["max_ideas_within_cap"]), (True, 1))
+        out = self.run_node(b)
+        self.assertIn("Risque cumulé : 997.24 USD (1.00 %) sur 0.75 % autorisés"
+                      " · levier cumulé ×0.74", out)
+        self.assertEqual(out.count("Risque cumulé au-dessus du plafond : au plus 1 idée "
+                                   "ouverte en même temps."), 1)
+        self.assertNotIn(OVER_CAP_BANNER, out)
+        ti.update(total_risk_usd=2500.0, total_risk_pct=2.5, max_total_pct=2.0,
+                  max_ideas_within_cap=4)
         out = self.run_node(b)
         self.assertIn("Risque cumulé : 2500.00 USD (2.50 %) sur 2 % autorisés", out)
+        self.assertEqual(out.count("Risque cumulé au-dessus du plafond : au plus 4 idées "
+                                   "ouvertes en même temps."), 1)
+        # an older briefing without the key keeps the old sentence
+        del ti["max_ideas_within_cap"]
+        out = self.run_node(b)
         self.assertEqual(out.count(OVER_CAP_BANNER), 1)
         # only a real true counts: the text "false" does not raise the banner
         ti["over_cap"] = "false"
@@ -883,6 +904,141 @@ class TestInlineScriptRuns(unittest.TestCase):
         self.assertIn(short_only[0]["symbol"], out)
         self.assertIn("Rejet depuis le surachat", out)
 
+    # ---- final wave: account line, close date, since_close, cap, ties, cosmetics
+
+    def test_account_line(self):
+        b = sample()
+        out = self.run_node(b)
+        self.assertEqual(out.count("Compte : 100" + NBSP + "000 USD · risque par idée 0.5 % "
+                                   "(500.00 USD) · levier max 30:1 (valeurs par défaut)"), 1)
+        acc = b["trade_ideas"]["account"]
+        acc.update(source="file", capital=1234567, risk_per_trade_usd=3086.42, leverage_max=20)
+        out = self.run_node(b)
+        self.assertIn("Compte : 1" + NBSP + "234" + NBSP + "567 USD · risque par idée 0.25 % "
+                      "(3086.42 USD) · levier max 20:1", out)
+        self.assertNotIn("valeurs par défaut", out)
+        for acc in ({}, {"capital": None, "risk_per_trade_usd": "x"}, {"capital": 50000}):
+            b["trade_ideas"]["account"] = acc
+            out = self.run_node(b)
+            self.assertNotIn("Section indisponible", out)
+            for bad in ("undefined", "NaN", "null"):
+                self.assertNotIn(bad, out, repr(acc))
+        self.assertIn("Compte : 50" + NBSP + "000 USD", out)
+        b["trade_ideas"]["account"] = {}
+        self.assertNotIn("Compte :", self.run_node(b))
+
+    def test_entry_shows_the_close_date_and_the_risk_note(self):
+        b = sample()
+        out = self.run_node(b)
+        eur = self.idea(b, "EURUSD=X")
+        self.assertIn("Entrée %s clôture du 2026-11-09" % self.px(eur, eur["reference_price"]),
+                      out)
+        self.assertEqual(out.count("clôture du 2026-11-09"), 3)
+        self.assertEqual(out.count(RISK_NOTE), 1)
+        for i in b["trade_ideas"]["ideas"]:
+            del i["last_bar_date"]
+        out = self.run_node(b)
+        self.assertNotIn("clôture du", out)
+
+    def test_prices_use_the_decimals_of_the_idea(self):
+        b = sample()
+        b["trade_ideas"]["skipped"] = []
+        b["trade_ideas"]["ideas"] = [{
+            "rank": 1, "symbol": "NG=F", "name": "Gaz", "side": "haussier", "score": 2,
+            "setups": ["bull_flag"], "trend": None, "reference_price": 3.0123,
+            "stop": 2.8993, "target": 3.2383, "rr": 2.0, "atr": 0.0753, "decimals": 4,
+            "size": {"status": "ok", "lots": None, "units": None, "size": 3.5,
+                     "risk_usd": 395.5, "leverage": 0.105, "pip_value_usd_per_lot": None,
+                     "limited_by": "risque", "note": None},
+            "why": [], "last_bar_date": "2026-11-09", "since_close": None}]
+        out = self.run_node(b)
+        for text in ("3.0123", "2.8993", "3.2383", "Taille 3.5"):
+            self.assertIn(text, out)
+        self.assertNotIn("3.01 ", out)
+        b["trade_ideas"]["ideas"][0]["decimals"] = "x"       # junk: the old heuristic (2)
+        out = self.run_node(b)
+        self.assertIn("Entrée 3.01 clôture du 2026-11-09 Stop 2.90 Cible 3.24", out)
+
+    def test_since_close_lines(self):
+        b = sample()
+        out = self.run_node(b)
+        eur = self.idea(b, "EURUSD=X")
+        self.assertIn("Dernier cours 1 h : %s" % self.px(eur, eur["since_close"]["last"]), out)
+        self.assertIn("Dernier cours 1 h : 8110.00", out)
+        self.assertEqual(out.count(VOID), 1)                  # ^FCHI only
+        self.assertNotIn(REACHED, out)
+        fchi = self.idea(b, "^FCHI")
+        fchi["since_close"]["target_crossed"] = True
+        out, tags = self.run_node(b, tags=True)
+        self.assertEqual(out.count(REACHED), 1)
+        for i in b["trade_ideas"]["ideas"]:
+            i["since_close"] = None
+        out = self.run_node(b)
+        for text in ("Dernier cours 1 h", VOID, REACHED):
+            self.assertNotIn(text, out)
+        for junk in ("x", 3, [], {"last": "x", "stop_crossed": "true"}):
+            fchi["since_close"] = junk
+            out = self.run_node(b)
+            self.assertNotIn(VOID, out)
+            for bad in ("undefined", "NaN", "null", "Section indisponible"):
+                self.assertNotIn(bad, out, repr(junk))
+
+    def test_void_banner_is_a_distinct_element(self):
+        out, tags = self.run_node(sample(), tags=True)
+        self.assertIn(VOID, out)
+        self.assertIn('h("p", "void", MSG_VOID)', read(TEMPLATE))
+
+    def test_total_leverage_and_ties_note(self):
+        b = sample()
+        ti = b["trade_ideas"]
+        out = self.run_node(b)
+        self.assertEqual(out.count("1 autre idée a le même score que la dernière affichée ; "
+                                   "à score égal, l'ordre est alphabétique."), 1)
+        ti["ties_at_cutoff"] = 3
+        out = self.run_node(b)
+        self.assertIn("3 autres idées ont le même score que la dernière affichée ; à score "
+                      "égal, l'ordre est alphabétique.", out)
+        for v in (0, None, "2", -1):
+            ti["ties_at_cutoff"] = v
+            self.assertNotIn("même score", self.run_node(b), repr(v))
+        for v in (0, 0.0, None, "1", -2):
+            ti["total_leverage"] = v
+            self.assertNotIn("levier cumulé", self.run_node(b), repr(v))
+
+    def test_size_cosmetics(self):
+        b = sample()
+        eur = self.idea(b, "EURUSD=X")
+        eur["size"].update(lots=2.5, units=250000, pip_value_usd_per_lot=0.0067)
+        out = self.run_node(b)
+        self.assertIn("2.50 lots (250" + NBSP + "000 unités)", out)
+        self.assertIn("0.0067 USD", out)
+        eur["size"].update(lots=1.99, units=199000, pip_value_usd_per_lot=0.01)
+        out = self.run_node(b)
+        self.assertIn("1.99 lot (199" + NBSP + "000 unités)", out)
+        self.assertIn("Valeur du pip par lot 0.01 USD", out)
+        self.assertIn("0.62 lot (62" + NBSP + "000 unités)", self.run_node())
+
+    def test_taille_cell_only_for_an_ok_size(self):
+        b = sample()
+        b["trade_ideas"]["ideas"] = [self.idea(b, "CL=F")]          # too_wide
+        b["trade_ideas"]["skipped"] = []
+        out = self.run_node(b)
+        self.assertIn("Stop trop large pour le risque fixé", out)
+        self.assertNotIn("Taille", out)
+        b = sample()
+        b["trade_ideas"]["ideas"] = [self.idea(b, "^FCHI")]         # to_confirm
+        out = self.run_node(b)
+        self.assertEqual(out.count("Taille"), 1)                   # the headline only
+        self.assertNotIn("Taille n/a", out)
+
+    def test_to_confirm_note_other_than_contracts_is_kept_whole(self):
+        b = sample()
+        fchi = self.idea(b, "^FCHI")
+        fchi["size"]["note"] = ("conversion de devise impossible : taux en USD introuvable "
+                                "pour ZAR")
+        out = self.run_node(b)
+        self.assertIn("conversion de devise impossible : taux en USD introuvable pour ZAR", out)
+
     def test_rendered_sample_has_no_forbidden_words(self):
         out = self.run_node()
         self.assertIsNone(re.search(FORBIDDEN_WORDS, out))
@@ -991,8 +1147,12 @@ class TestSampleFixture(unittest.TestCase):
                          ["ok", "to_confirm", "too_wide"])
         ok = next(i for i in ti["ideas"] if i["size"]["status"] == "ok")
         self.assertIsNotNone(ok["size"]["lots"])            # an ok forex idea
-        self.assertEqual(len(ti["skipped"]), 1)
-        self.assertFalse(ti["over_cap"])
+        self.assertEqual(len(ti["skipped"]), 2)
+        self.assertTrue(ti["over_cap"])
+        self.assertGreater(ti["ties_at_cutoff"], 0)
+        self.assertEqual(ti["account"]["source"], "default")
+        self.assertTrue(any((i["since_close"] or {}).get("stop_crossed") for i in ti["ideas"]))
+        self.assertTrue(any(h["symbol"] == "^GDAXI" for h in b["swing"]["hits"]))
         self.assertTrue(any(not h["setups"] and h["setups_short"]
                             for h in b["swing"]["hits"]))   # a short-only hit
 

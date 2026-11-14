@@ -25,7 +25,8 @@ DISCLAIMER = ("Liste de graphiques qui ont matché une règle. Pas un conseil. "
 SPEC_KEYS = {"as_of", "market_state", "counts", "data_age", "calendar", "strength",
              "swing", "day_plan", "trade_ideas", "warnings", "disclaimer"}
 IDEA_KEYS = {"reference", "account", "ideas", "skipped", "total_risk_usd",
-             "total_risk_pct", "max_total_pct", "over_cap"}
+             "total_risk_pct", "max_total_pct", "over_cap", "max_ideas_within_cap",
+             "ties_at_cutoff", "total_leverage"}
 DEFAULT_CONFIG_PATH = fx.DEFAULT_CONFIG
 
 SAT = datetime(2026, 11, 14, 15, 0, tzinfo=timezone.utc)   # Sat 10:00 New York
@@ -111,6 +112,141 @@ class TestReadList(unittest.TestCase):
             with open(p, "rb") as f:
                 self.assertTrue(f.read().startswith(b"\xef\xbb\xbf"))
             self.assertEqual(briefing.read_list(p), [("EURUSD=X", "EUR/USD"), ("GC=F", "Or")])
+
+    def test_read_list_upper_cases_symbols_not_names(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "l.txt")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("eurusd=x|eur/usd\n gc=f \n^fchi|Cac 40\n")
+            self.assertEqual(briefing.read_list(p),
+                             [("EURUSD=X", "eur/usd"), ("GC=F", "GC=F"), ("^FCHI", "Cac 40")])
+
+
+H = 3600
+D9 = int(datetime(2026, 11, 9, tzinfo=timezone.utc).timestamp())    # the close date
+D10 = D9 + DAY
+
+
+def hseries(bars):
+    """1 h bars (ts, o, h, l, c)."""
+    return data.Series(bars=list(bars), gmtoffset=0)
+
+
+def bar(ts, high, low, close):
+    return (ts, close, high, low, close)
+
+
+class TestSinceClose(unittest.TestCase):
+    LONG = {"side": "haussier", "stop": 1.17565, "target": 1.2487,
+            "last_bar_date": "2026-11-09"}
+    SHORT = {"side": "baissier", "stop": 1.22, "target": 1.15, "last_bar_date": "2026-11-09"}
+
+    def test_none_without_bars_after_the_close(self):
+        self.assertIsNone(briefing.since_close(self.LONG, None))
+        self.assertIsNone(briefing.since_close(self.LONG, hseries([])))
+        # bars on the close date itself (and before) are ignored, even if they cross
+        s = hseries([bar(D9 - DAY + 5 * H, 1.30, 1.10, 1.2),
+                     bar(D9 + 23 * H, 1.30, 1.10, 1.2)])
+        self.assertIsNone(briefing.since_close(self.LONG, s))
+        self.assertIsNone(briefing.since_close(dict(self.LONG, last_bar_date=None), s))
+
+    def test_weekend_run_has_no_bar_after_friday(self):
+        fri = dict(self.LONG, last_bar_date="2026-11-13")
+        t_fri = int(datetime(2026, 11, 13, 20, tzinfo=timezone.utc).timestamp())
+        s = hseries([bar(t_fri - k * H, 1.21, 1.19, 1.2) for k in range(5)])
+        self.assertIsNone(briefing.since_close(fri, s))
+
+    def test_haussier_neither_crossed(self):
+        s = hseries([bar(D9 + 20 * H, 1.30, 1.10, 1.2),           # ignored: close date
+                     bar(D10 + 1 * H, 1.21, 1.18, 1.205),
+                     bar(D10 + 3 * H, 1.215, 1.19, 1.212),
+                     bar(D10 + 2 * H, 1.22, 1.185, 1.201)])
+        self.assertEqual(briefing.since_close(self.LONG, s),
+                         {"last": 1.212, "stop_crossed": False, "target_crossed": False})
+
+    def test_haussier_stop_crossed_and_touch_counts(self):
+        s = hseries([bar(D10 + H, 1.21, 1.17565, 1.19)])          # low == stop
+        self.assertEqual(briefing.since_close(self.LONG, s),
+                         {"last": 1.19, "stop_crossed": True, "target_crossed": False})
+
+    def test_haussier_target_crossed(self):
+        s = hseries([bar(D10 + H, 1.25, 1.20, 1.249), bar(D10 + 2 * H, 1.2487, 1.24, 1.245)])
+        self.assertEqual(briefing.since_close(self.LONG, s),
+                         {"last": 1.245, "stop_crossed": False, "target_crossed": True})
+
+    def test_baissier_uses_the_mirror_tests(self):
+        s = hseries([bar(D10 + H, 1.221, 1.18, 1.2)])
+        self.assertEqual(briefing.since_close(self.SHORT, s),
+                         {"last": 1.2, "stop_crossed": True, "target_crossed": False})
+        s = hseries([bar(D10 + H, 1.21, 1.149, 1.16)])
+        self.assertEqual(briefing.since_close(self.SHORT, s),
+                         {"last": 1.16, "stop_crossed": False, "target_crossed": True})
+        s = hseries([bar(D10 + H, 1.21, 1.16, 1.17)])
+        self.assertEqual(briefing.since_close(self.SHORT, s),
+                         {"last": 1.17, "stop_crossed": False, "target_crossed": False})
+
+    def test_build_briefing_fills_since_close_from_the_hourly_bars(self):
+        hourly = {"EURUSD=X": hseries([bar(D10 + H, 1.21, 1.17, 1.18)])}
+        b = briefing.build_briefing(UNIVERSE[:1], all_breakouts(), [], hourly, cal(), TUE)
+        idea = b["trade_ideas"]["ideas"][0]
+        self.assertEqual(idea["last_bar_date"], "2026-11-09")
+        self.assertEqual(idea["since_close"],
+                         {"last": 1.18, "stop_crossed": True, "target_crossed": False})
+        line = TestSummary.idea_block(briefing.render_summary(b))[1]
+        self.assertTrue(line.endswith("risque 487.00 USD  stop déjà franchi"), line)
+        hourly = {"EURUSD=X": hseries([bar(D10 + H, 1.30, 1.17, 1.18)])}
+        b = briefing.build_briefing(UNIVERSE[:1], all_breakouts(), [], hourly, cal(), TUE)
+        line = TestSummary.idea_block(briefing.render_summary(b))[1]
+        self.assertTrue(line.endswith("  stop déjà franchi  cible déjà atteinte"), line)
+        hourly = {"EURUSD=X": hseries([bar(D10 + H, 1.21, 1.19, 1.2)])}
+        b = briefing.build_briefing(UNIVERSE[:1], all_breakouts(), [], hourly, cal(), TUE)
+        line = TestSummary.idea_block(briefing.render_summary(b))[1]
+        self.assertNotIn("franchi", line)
+        self.assertNotIn("atteinte", line)
+
+
+class TestAccountAndContracts(unittest.TestCase):
+    def test_account_source_in_the_json(self):
+        b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {}, cal(), TUE)
+        self.assertEqual(b["trade_ideas"]["account"]["source"], "default")
+        b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {}, cal(), TUE,
+                                    config=config.defaults(), config_source="file")
+        self.assertEqual(b["trade_ideas"]["account"]["source"], "file")
+        self.assertEqual(json.loads(json.dumps(b))["trade_ideas"]["account"]["source"], "file")
+
+    def test_summary_header_says_when_the_defaults_are_used(self):
+        cfg = config.defaults()
+        cfg["account"]["capital"] = 25000
+        cfg["risk"]["per_trade_pct"] = 0.25
+        cfg["leverage_max"] = 20
+        b = briefing.build_briefing(UNIVERSE[:1], all_breakouts(), [], {}, cal(), TUE,
+                                    config=cfg, config_source="file")
+        head = TestSummary.idea_block(briefing.render_summary(b))[0]
+        self.assertEqual(head, "Idées de trade (1), plan mécanique à valider. Compte 25000 USD, "
+                               "risque 0.25 % par idée (62.50 USD), levier max 20:1")
+        self.assertNotIn("défaut", head)
+        b = briefing.build_briefing(UNIVERSE[:1], all_breakouts(), [], {}, cal(), TUE)
+        head = TestSummary.idea_block(briefing.render_summary(b))[0]
+        self.assertTrue(head.endswith("levier max 30:1 (valeurs par défaut)"), head)
+
+    def test_contracts_keys_that_match_nothing_warn(self):
+        cfg = config.defaults()
+        cfg["contracts"] = {"GC=F": {"usd_per_point": 100, "step": 0.01, "min": 0.01},
+                            "GCF": {"usd_per_point": 100, "step": 0.01, "min": 0.01},
+                            "EURUSD=X": {"usd_per_point": 1, "step": 1, "min": 1}}
+        universe = UNIVERSE + [("GC=F", "Or")]
+        daily = all_breakouts()
+        daily["GC=F"] = series(breakout())
+        b = briefing.build_briefing(universe, daily, [], {}, cal(), TUE, config=cfg)
+        warn = [w for w in b["warnings"] if w.startswith("contracts : ")]
+        self.assertEqual(warn, [
+            "contracts : GCF ne correspond à aucun instrument analysé ou est une paire "
+            "forex : ignorée.",
+            "contracts : EURUSD=X ne correspond à aucun instrument analysé ou est une paire "
+            "forex : ignorée."])
+        cfg["contracts"] = {"GC=F": {"usd_per_point": 100, "step": 0.01, "min": 0.01}}
+        b = briefing.build_briefing(universe, daily, [], {}, cal(), TUE, config=cfg)
+        self.assertFalse(any(w.startswith("contracts") for w in b["warnings"]))
 
 
 class TestBuild(unittest.TestCase):
@@ -325,13 +461,17 @@ class TestTradeIdeas(unittest.TestCase):
         self.assertEqual(set(ti), IDEA_KEYS)
         self.assertEqual(ti["reference"], "last_close")
         self.assertEqual(ti["account"], {"currency": "USD", "capital": 100000,
-                                         "risk_per_trade_usd": 500.0, "leverage_max": 30})
+                                         "risk_per_trade_usd": 500.0, "leverage_max": 30,
+                                         "source": "default"})
         self.assertEqual(ti["max_total_pct"], 2.0)
         self.assertTrue(ti["ideas"])
         idea = ti["ideas"][0]
         self.assertEqual(set(idea), {"rank", "symbol", "name", "side", "score", "setups",
                                      "trend", "reference_price", "stop", "target", "rr",
-                                     "atr", "size", "why"})
+                                     "atr", "decimals", "size", "why", "last_bar_date",
+                                     "since_close"})
+        self.assertEqual(idea["last_bar_date"], "2026-11-09")
+        self.assertIsNone(idea["since_close"])          # no 1 h bars given
         self.assertEqual(idea["rank"], 1)
         self.assertEqual(idea["side"], "haussier")
         self.assertEqual(set(idea["size"]), {"status", "lots", "units", "size", "risk_usd",
@@ -427,6 +567,52 @@ class TestSummary(unittest.TestCase):
         self.assertIn("Dernière barre : 2026-11-09", s)
         self.assertIn(DISCLAIMER, s)
 
+    def test_summary_worst_case_with_every_new_suffix_still_fits(self):
+        syms = ["%s%s=X" % (a, b) for a in ("EUR", "GBP", "AUD", "NZD", "USD", "CAD")
+                for b in ("JPY", "CHF", "SEK", "NOK", "PLN", "MXN")]
+        universe = [(s, s[:3] + "/" + s[3:6]) for s in syms] + OTHERS
+        daily = {s: series(breakout()) for s, _ in universe}
+        cfg = many_ideas_config(max_total_pct=0.5)
+        cfg["account"]["capital"] = 123456789.5
+        cfg["contracts"] = {"TYPO%d" % i: {"usd_per_point": 1, "step": 1, "min": 1}
+                            for i in range(6)}
+        b = briefing.build_briefing(universe, daily,
+                                    [{"symbol": "X%d=X" % i, "reason": "r"} for i in range(30)],
+                                    {}, cal("partial", [event("2026-11-10T%02d:00:00+00:00"
+                                                              % (16 + i % 8), "USD",
+                                                              title="Event %d" % i)
+                                                        for i in range(20)], "HTTP 404"),
+                                    TUE, extra_warnings=["w%d" % i for i in range(12)],
+                                    config=cfg)
+        ti = b["trade_ideas"]
+        self.assertTrue(ti["over_cap"])
+        for i in ti["ideas"]:
+            i["since_close"] = {"last": 1.0, "stop_crossed": True, "target_crossed": True}
+        ti["ideas"][0]["size"] = {"status": "to_confirm", "lots": None, "units": None,
+                                  "size": None, "risk_usd": None, "leverage": None,
+                                  "pip_value_usd_per_lot": None, "limited_by": None,
+                                  "note": "x"}
+        ti["ideas"][1]["size"] = {"status": "ok", "lots": 9999.99, "units": 999999000,
+                                  "size": None, "risk_usd": 617283.94, "leverage": 29.99,
+                                  "pip_value_usd_per_lot": 10.0, "limited_by": "levier",
+                                  "note": None}
+        ti["total_leverage"] = 29.99
+        s = briefing.render_summary(b)
+        lines = s.splitlines()
+        self.assertLessEqual(len(lines), 40)
+        self.assertEqual(max(len(l) for l in lines) <= 150, True, max(lines, key=len))
+        block = self.idea_block(s)
+        self.assertEqual(len(block), 8)
+        self.assertIn("risque prévu", block[1])
+        self.assertTrue(block[-1].startswith("  Risque cumulé : "))
+        self.assertIn(": dépassé, au plus ", block[-1])
+        self.assertIn("levier cumulé ×", block[-1])
+        self.assertTrue(block[0].startswith("Idées de trade (10), plan mécanique à valider. "
+                                            "Compte 123456789.50 USD"), block[0])
+        self.assertNotRegex(s, FORBIDDEN_WORDS)
+        self.assertRegex(s + " vendre", FORBIDDEN_WORDS)       # the scan can fail
+        self.assertNotRegex(json.dumps(b, ensure_ascii=False), FORBIDDEN_WORDS)
+
     def test_summary_always_prints_the_last_bar_date(self):
         daily = {"EURUSD=X": series(breakout(), end=date(2026, 11, 6)),
                  "GBPUSD=X": series(flat(), end=date(2026, 11, 9)),
@@ -518,7 +704,9 @@ class TestSummary(unittest.TestCase):
         self.assertEqual(len(ti["ideas"]), 3)
         s = briefing.render_summary(b)
         block = self.idea_block(s)
-        self.assertEqual(block[0], "Idées de trade (3), plan mécanique à valider :")
+        self.assertEqual(block[0], "Idées de trade (3), plan mécanique à valider. Compte "
+                                   "100000 USD, risque 0.5 % par idée (500.00 USD), "
+                                   "levier max 30:1 (valeurs par défaut)")
         self.assertEqual(len(block), 5)
         by_symbol = {i["symbol"]: i for i in ti["ideas"]}
         for line, idea in zip(block[1:4], ti["ideas"]):
@@ -531,20 +719,26 @@ class TestSummary(unittest.TestCase):
         gold = next(l for l in block if " GC=F " in l)
         fchi = next(l for l in block if " ^FCHI " in l)
         e = by_symbol["EURUSD=X"]
+        self.assertEqual(e["decimals"], 5)
         self.assertEqual(
             eur.split(". ", 1)[1],
-            "EURUSD=X haussier  entrée %s  stop %s  cible %s  %.2f lot  risque %.2f USD" % (
+            "EURUSD=X haussier  entrée %.5f  stop %.5f  cible %.5f  %.2f lot  risque %.2f USD" % (
                 e["reference_price"], e["stop"], e["target"], e["size"]["lots"],
                 e["size"]["risk_usd"]))
         g = by_symbol["GC=F"]
+        self.assertIn("  entrée %.*f  stop %.*f  cible %.*f  " % (
+            g["decimals"], g["reference_price"], g["decimals"], g["stop"],
+            g["decimals"], g["target"]), gold)
         self.assertIn("  taille %s  risque %.2f USD" % (g["size"]["size"], g["size"]["risk_usd"]),
                       gold)
-        self.assertTrue(fchi.endswith("  taille à confirmer"), fchi)
-        self.assertNotIn("risque", fchi)
+        self.assertTrue(fchi.endswith("  taille à confirmer  risque prévu 500.00 USD"), fchi)
+        self.assertEqual(fchi.count("risque"), 1)
+        lev = sum(i["size"]["leverage"] for i in ti["ideas"] if i["size"]["status"] == "ok")
+        self.assertEqual(ti["total_leverage"], round(lev, 2))
         self.assertEqual(
             block[-1],
-            "  Risque cumulé : %.2f USD (%.2f %%) sur 2.0 %% autorisés" % (
-                ti["total_risk_usd"], ti["total_risk_pct"]))
+            "  Risque cumulé : %.2f USD (%.2f %%) sur 2.0 %% autorisés · levier cumulé ×%.2f" % (
+                ti["total_risk_usd"], ti["total_risk_pct"], ti["total_leverage"]))
         self.assertFalse(ti["over_cap"])
         self.assertNotIn("dépassé", block[-1])
 
@@ -553,20 +747,29 @@ class TestSummary(unittest.TestCase):
         b = briefing.build_briefing(UNIVERSE[:1], all_breakouts(), [], {}, cal(), TUE)
         block = self.idea_block(briefing.render_summary(b))
         idea = b["trade_ideas"]["ideas"][0]
+        # distance 1.2 - 1.17565 = 0.02435 ; target 1.2 + 2 * 0.02435 = 1.24870
         self.assertEqual(idea["reference_price"], 1.2)
         self.assertEqual(idea["stop"], 1.17565)
-        self.assertEqual(idea["target"], 1.24868)
+        self.assertEqual(idea["target"], 1.2487)
         self.assertTrue(block[1].startswith(
-            "  1. EURUSD=X haussier  entrée 1.2  stop 1.17565  cible 1.24868  "), block[1])
-        self.assertEqual(block[1].split("cible 1.24868  ")[1], "0.20 lot  risque 487.00 USD")
+            "  1. EURUSD=X haussier  entrée 1.20000  stop 1.17565  cible 1.24870  "), block[1])
+        self.assertEqual(block[1].split("cible 1.24870  ")[1], "0.20 lot  risque 487.00 USD")
 
     def test_summary_over_cap_suffix(self):
-        b = self.three_idea_briefing(max_total_pct=0.5)
-        self.assertTrue(b["trade_ideas"]["over_cap"])
+        b = self.three_idea_briefing(max_total_pct=1.0)
+        ti = b["trade_ideas"]
+        self.assertTrue(ti["over_cap"])
+        self.assertEqual(ti["max_ideas_within_cap"], 2)
         last = self.idea_block(briefing.render_summary(b))[-1]
         self.assertTrue(last.startswith("  Risque cumulé : "))
-        self.assertIn(" sur 0.5 % autorisés : dépassé", last)
-        self.assertTrue(last.endswith(" : dépassé"))
+        self.assertIn(" sur 1.0 % autorisés : dépassé, au plus 2 idées ouvertes en même temps"
+                      " · levier cumulé ×", last)
+        self.assertTrue(last.endswith(" · levier cumulé ×%.2f" % ti["total_leverage"]), last)
+        b = self.three_idea_briefing(max_total_pct=0.5)
+        self.assertEqual(b["trade_ideas"]["max_ideas_within_cap"], 1)
+        last = self.idea_block(briefing.render_summary(b))[-1]
+        self.assertIn(" sur 0.5 % autorisés : dépassé, au plus 1 idée ouverte en même temps"
+                      " · levier cumulé ×", last)
 
     def test_summary_zero_ideas_is_one_line(self):
         daily = {s: series(neutral()) for s, _ in UNIVERSE}
@@ -585,12 +788,13 @@ class TestSummary(unittest.TestCase):
                         "risk_usd": None, "leverage": None, "pip_value_usd_per_lot": None,
                         "limited_by": None, "note": "stop trop large pour le risque fixé"}
         wide["reference_price"], wide["stop"], wide["target"] = 1e-05, 5e-06, 2.5e-05
+        wide["decimals"] = 6
         line = next(l for l in self.idea_block(briefing.render_summary(b))
                     if " EURUSD=X " in l)
         self.assertTrue(line.endswith("  stop trop large"), line)
         self.assertNotIn("risque", line)
         self.assertNotIn("e-", line)
-        self.assertIn("entrée 0.00001  stop 0.000005  cible 0.000025", line)
+        self.assertIn("entrée 0.000010  stop 0.000005  cible 0.000025", line)
 
     def test_summary_more_than_six_ideas_adds_an_others_line(self):
         universe = UNIVERSE + OTHERS
@@ -601,7 +805,8 @@ class TestSummary(unittest.TestCase):
         self.assertGreater(n, 6)
         block = self.idea_block(briefing.render_summary(b))
         self.assertEqual(len(block), 8)
-        self.assertEqual(block[0], "Idées de trade (%d), plan mécanique à valider :" % n)
+        self.assertTrue(block[0].startswith(
+            "Idées de trade (%d), plan mécanique à valider. Compte 100000 USD, " % n), block[0])
         self.assertEqual(block[-2], "  ... et %d autres (voir briefing.json)" % (n - 5))
         self.assertTrue(block[-1].startswith("  Risque cumulé : "))
 
@@ -845,6 +1050,35 @@ class TestMain(unittest.TestCase):
                 self.assertFalse(os.path.exists(self.out))
                 self.assertEqual(rec.calls, [])          # no network call
 
+    def test_main_explicit_config_path_must_exist(self):
+        missing = os.path.join(self.tmp.name, "absent", "my_config.json")
+        rec = Recorder(all_breakouts())
+        code, text = run_main(self.argv("--config", missing), rec.deps())
+        self.assertEqual(code, 1)
+        self.assertEqual(text.strip().splitlines(),
+                         ["Fichier de configuration introuvable : %s." % missing])
+        self.assertEqual(rec.calls, [])                  # no network call
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_main_absent_default_config_gives_the_defaults(self):
+        self.assertFalse(os.path.exists(fx.DEFAULT_CONFIG))
+        rec = Recorder(all_breakouts())
+        code, text = run_main(self.argv(), rec.deps())
+        self.assertEqual(code, 0)
+        with open(self.out, encoding="utf-8") as f:
+            b = json.load(f)
+        self.assertEqual(b["trade_ideas"]["account"]["source"], "default")
+        self.assertIn("(valeurs par défaut)", text)
+
+    def test_main_real_config_file_is_source_file(self):
+        rec = Recorder(all_breakouts())
+        code, text = run_main(self.argv("--config", self.write_config({})), rec.deps())
+        self.assertEqual(code, 0)
+        with open(self.out, encoding="utf-8") as f:
+            b = json.load(f)
+        self.assertEqual(b["trade_ideas"]["account"]["source"], "file")
+        self.assertNotIn("valeurs par défaut", text)
+
     def test_main_config_is_checked_before_the_lists(self):
         rec = Recorder(all_breakouts())
         code, text = run_main(
@@ -873,6 +1107,7 @@ class TestMain(unittest.TestCase):
             b = json.load(f)
         self.assertEqual(b["trade_ideas"]["account"]["capital"], 50000)
         self.assertEqual(b["trade_ideas"]["account"]["risk_per_trade_usd"], 250.0)
+        self.assertEqual(b["trade_ideas"]["account"]["source"], "file")
 
     def test_main_writes_trade_ideas_and_prints_the_block(self):
         rec = Recorder(all_breakouts())
@@ -881,7 +1116,7 @@ class TestMain(unittest.TestCase):
         with open(self.out, encoding="utf-8") as f:
             b = json.load(f)
         self.assertTrue(b["trade_ideas"]["ideas"])
-        self.assertIn("plan mécanique à valider :", text)
+        self.assertIn("plan mécanique à valider. Compte 100000 USD", text)
 
     def test_main_saturday_still_gives_ideas_with_the_weekend_warning(self):
         rec = Recorder(all_breakouts())

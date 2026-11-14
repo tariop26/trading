@@ -125,59 +125,62 @@ class TestMakePlan(unittest.TestCase):
         a = an("^X", last=100.0, atr_pct=1.0)
         self.assertEqual(plan.make_plan(a, "haussier", cfg()),
                          {"reference_price": 100.0, "stop": 98.5, "target": 103.0,
-                          "rr": 2.0, "atr": 1.0})
+                          "rr": 2.0, "atr": 1.0, "decimals": 2})
         p = plan.make_plan(a, "baissier", cfg())
         self.assertEqual((p["stop"], p["target"], p["rr"]), (101.5, 97.0, 2.0))
 
     def test_forex_rounding_directions(self):
-        # entry 1.08123, ATR 0.00987 -> stop 1.08123-0.014805=1.066425 -> floor 1.06642
-        # target 1.08123+2*0.014805=1.11084 (exact) ; use values that are not on the grid
+        # entry 1.08123 (on the grid), ATR 0.0098392 -> raw stop 1.0664712 -> floor 1.06647;
+        # distance 0.01476 -> target 1.08123 + 2 * 0.01476 = 1.11075 (from the ROUNDED stop)
         a = an("EURUSD=X", last=1.08123, atr_pct=0.91)
         atr = 1.08123 * 0.91 / 100
         p = plan.make_plan(a, "haussier", cfg())
-        raw_stop, raw_target = 1.08123 - 1.5 * atr, 1.08123 + 3.0 * atr
-        self.assertEqual(p["stop"], int(raw_stop * 1e5) / 1e5)
+        raw_stop = 1.08123 - 1.5 * atr
+        self.assertEqual(p["stop"], 1.06647)
         self.assertLessEqual(p["stop"], raw_stop)
-        self.assertEqual(p["target"], int(raw_target * 1e5) / 1e5)
-        self.assertLessEqual(p["target"], raw_target)
+        self.assertLess(raw_stop - p["stop"], 1e-5)
+        self.assertEqual(p["target"], 1.11075)
+        self.assertEqual(round(p["target"] - p["reference_price"], 5),
+                         round(2 * (p["reference_price"] - p["stop"]), 5))
         pb = plan.make_plan(a, "baissier", cfg())
-        raw_stop_b, raw_target_b = 1.08123 + 1.5 * atr, 1.08123 - 3.0 * atr
+        raw_stop_b = 1.08123 + 1.5 * atr
+        self.assertEqual(pb["stop"], 1.09599)
         self.assertGreaterEqual(pb["stop"], raw_stop_b)
-        self.assertGreaterEqual(pb["target"], raw_target_b)
         self.assertLess(pb["stop"] - raw_stop_b, 1e-5)
-        self.assertLess(pb["target"] - raw_target_b, 1e-5)
+        self.assertEqual(pb["target"], 1.05171)
         self.assertEqual(round(pb["stop"], 5), pb["stop"])
 
     def test_forex_exact_values(self):
-        # atr = 1.2345 * 0.5 / 100 = 0.0061725 ; 1.5*atr = 0.00925875 ; 3*atr = 0.0185175
+        # atr = 1.2345 * 0.5 / 100 = 0.0061725 ; 1.5*atr = 0.00925875
         a = an("EURUSD=X", last=1.2345, atr_pct=0.5)
         p = plan.make_plan(a, "haussier", cfg())
-        self.assertEqual(p["stop"], 1.22524)    # 1.22524125 floored
-        self.assertEqual(p["target"], 1.25301)  # 1.2530175 floored
+        self.assertEqual(p["stop"], 1.22524)    # 1.22524125 floored ; distance 0.00926
+        self.assertEqual(p["target"], 1.25302)  # 1.2345 + 2 * 0.00926
         p = plan.make_plan(a, "baissier", cfg())
-        self.assertEqual(p["stop"], 1.24376)    # 1.24375875 ceiled
-        self.assertEqual(p["target"], 1.21599)  # 1.2159825 ceiled
+        self.assertEqual(p["stop"], 1.24376)    # 1.24375875 ceiled ; distance 0.00926
+        self.assertEqual(p["target"], 1.21598)  # 1.2345 - 2 * 0.00926
 
     def test_jpy_quote_rounds_to_three_decimals(self):
         a = an("USDJPY=X", last=150.123, atr_pct=0.5)
         p = plan.make_plan(a, "haussier", cfg())
-        # atr 0.7506150 ; stop 150.123-1.1259225=148.9970775 -> 148.997
+        self.assertEqual(p["decimals"], 3)
+        # atr 0.7506150 ; stop 150.123-1.1259225=148.9970775 -> 148.997 ; distance 1.126
         self.assertEqual(p["stop"], 148.997)
-        # target 150.123+2.251845=152.374845 -> 152.374
-        self.assertEqual(p["target"], 152.374)
+        self.assertEqual(p["target"], 152.375)  # 150.123 + 2.252
         p = plan.make_plan(a, "baissier", cfg())
-        self.assertEqual(p["stop"], 151.249)    # 151.2489225 ceiled
-        self.assertEqual(p["target"], 147.872)  # 147.871155 ceiled
+        self.assertEqual(p["stop"], 151.249)    # 151.2489225 ceiled ; distance 1.126
+        self.assertEqual(p["target"], 147.871)  # 150.123 - 2.252
 
-    def test_non_forex_rounds_to_two_decimals(self):
+    def test_non_forex_rounds_to_two_decimals_above_100(self):
         a = an("GC=F", last=2034.57, atr_pct=0.8)
-        # atr 16.27656 ; stop 2034.57-24.41484=2010.15516 -> 2010.15
-        # target 2034.57+48.82968=2083.39968 -> 2083.39
+        # atr 16.27656 ; stop 2034.57-24.41484=2010.15516 -> 2010.15 ; distance 24.42
+        # target 2034.57+48.84=2083.41
         p = plan.make_plan(a, "haussier", cfg())
-        self.assertEqual((p["stop"], p["target"]), (2010.15, 2083.39))
-        # baissier: stop 2058.98484 -> 2058.99 ; target 1985.74032 -> 1985.75
+        self.assertEqual(p["decimals"], 2)
+        self.assertEqual((p["stop"], p["target"]), (2010.15, 2083.41))
+        # baissier: stop 2058.98484 -> 2058.99 ; distance 24.42 ; target 1985.73
         p = plan.make_plan(a, "baissier", cfg())
-        self.assertEqual((p["stop"], p["target"]), (2058.99, 1985.75))
+        self.assertEqual((p["stop"], p["target"]), (2058.99, 1985.73))
         self.assertEqual(p["atr"], 16.27656)
 
     def test_missing_or_zero_atr_returns_none(self):
@@ -209,14 +212,19 @@ class TestBuildTradeIdeas(unittest.TestCase):
             out = plan.build_trade_ideas(a, cfg())
         self.assertEqual(set(out), {"reference", "account", "ideas", "skipped",
                                     "total_risk_usd", "total_risk_pct",
-                                    "max_total_pct", "over_cap"})
+                                    "max_total_pct", "over_cap", "max_ideas_within_cap",
+                                    "ties_at_cutoff", "total_leverage"})
         self.assertEqual(out["account"], {"currency": "USD", "capital": 100000,
                                           "risk_per_trade_usd": 500.0,
                                           "leverage_max": 30})
         idea = out["ideas"][0]
         self.assertEqual(list(idea), ["rank", "symbol", "name", "side", "score",
                                       "setups", "trend", "reference_price", "stop",
-                                      "target", "rr", "atr", "size", "why"])
+                                      "target", "rr", "atr", "decimals", "size", "why",
+                                      "last_bar_date", "since_close"])
+        self.assertEqual(idea["decimals"], 2)
+        self.assertEqual(idea["last_bar_date"], "2026-11-13")
+        self.assertIsNone(idea["since_close"])
         self.assertEqual(idea["rank"], 1)
         self.assertEqual(idea["side"], "haussier")
         self.assertEqual(idea["setups"], ["breakout_20d", "oversold", "overbought"])
@@ -353,10 +361,12 @@ class TestBuildTradeIdeas(unittest.TestCase):
         out = plan.build_trade_ideas(analyses, cfg())
         self.assertEqual(len(out["ideas"]), 5)
         self.assertEqual(out["skipped"],
-                         [{"symbol": "^F", "reason": "au-delà des 5 idées affichées"},
-                          {"symbol": "^G", "reason": "au-delà des 5 idées affichées"}])
+                         [{"symbol": "^F", "reason": "au-delà des 5 idées affichées (score 2)"},
+                          {"symbol": "^G", "reason": "au-delà des 5 idées affichées (score 2)"}])
+        self.assertEqual(out["ties_at_cutoff"], 2)      # ^E (score 2) is the last shown
         out = plan.build_trade_ideas(analyses, cfg(ideas={"max_shown": 2}))
-        self.assertEqual(out["skipped"][0]["reason"], "au-delà des 2 idées affichées")
+        self.assertEqual(out["skipped"][0]["reason"], "au-delà des 2 idées affichées (score 2)")
+        self.assertEqual(out["ties_at_cutoff"], 0)      # ^B (score 3) is the last shown
 
     def test_too_wide_and_to_confirm_occupy_slots(self):
         analyses = [an("^%s" % c, setups=["breakout_20d"]) for c in "ABC"]
@@ -367,7 +377,7 @@ class TestBuildTradeIdeas(unittest.TestCase):
         self.assertEqual([i["size"]["status"] for i in out["ideas"]],
                          ["too_wide", "to_confirm"])
         self.assertEqual(out["skipped"],
-                         [{"symbol": "^C", "reason": "au-delà des 2 idées affichées"}])
+                         [{"symbol": "^C", "reason": "au-delà des 2 idées affichées (score 2)"}])
         # too_wide counts 0, to_confirm counts the planned 500
         self.assertEqual(out["total_risk_usd"], 500.0)
 
@@ -422,6 +432,276 @@ class TestBuildTradeIdeas(unittest.TestCase):
         self.assertIsNone(FORBIDDEN.search("surachat"))
         self.assertIsNone(FORBIDDEN.search("survente"))
         self.assertIsNone(FORBIDDEN.search(text))
+
+
+def lev_size(risk, leverage):
+    s = ok_size(risk)
+    s["leverage"] = leverage
+    return s
+
+
+class TestFinalWave(unittest.TestCase):
+    """Tick by magnitude, rounded entry, strict sides, stop floor, guard, cutoff ties,
+    cents cap, max_ideas_within_cap, total_leverage, aligned labels."""
+
+    def run_sizes(self, sizes, config=None):
+        letters = "ABCDEFGHIJ"[:len(sizes)]
+        analyses = [an("^%s" % c, setups=["breakout_20d"]) for c in letters]
+        it = iter(sizes)
+        c = config or cfg(ideas={"max_shown": 10, "max_per_exposure": 5})
+        with mock.patch.object(plan.sizing, "size_idea",
+                               side_effect=lambda *a, **k: next(it)):
+            return plan.build_trade_ideas(analyses, c)
+
+    # ---- B1 decimals / tick
+
+    def test_decimals_by_instrument_and_magnitude(self):
+        for symbol, last, decimals in (("NG=F", 3.0, 4), ("GC=F", 2000.0, 2),
+                                       ("USDJPY=X", 150.0, 3), ("EURUSD=X", 1.1, 5),
+                                       ("CL=F", 71.4, 3), ("^X", 100.0, 2),
+                                       ("^X", 99.99, 3), ("^X", 10.0, 3), ("^X", 9.99, 4),
+                                       ("EURJPY=X", 162.0, 3), ("USDZAR=X", 18.2, 5)):
+            p = plan.make_plan(an(symbol, last=last, atr_pct=1.0), "haussier", cfg())
+            self.assertEqual(p["decimals"], decimals, symbol + " %s" % last)
+            for k in ("reference_price", "stop", "target"):
+                self.assertEqual(round(p[k], decimals), p[k], (symbol, k))
+
+    def test_idea_carries_decimals(self):
+        out = plan.build_trade_ideas([an("NG=F", setups=["bull_flag"], last=3.0123,
+                                         atr_pct=2.5)], cfg())
+        self.assertEqual(out["ideas"][0]["decimals"], 4)
+        self.assertIsInstance(out["ideas"][0]["decimals"], int)
+
+    # ---- B2 rounding and consistency
+
+    def test_entry_rounded_to_the_nearest_tick_and_sizing_uses_the_rounded_plan(self):
+        # last 1.234567 -> entry 1.23457 (nearest) ; raw stop from the UNROUNDED last:
+        # 1.234567 - 1.5 * 0.006172835 = 1.2253077 -> floor 1.22530 ; distance 0.00927
+        # target 1.23457 + 2 * 0.00927 = 1.25311
+        a = an("EURUSD=X", setups=["breakout_20d"], last=1.234567, atr_pct=0.5)
+        with mock.patch.object(plan.sizing, "size_idea", return_value=ok_size()) as m:
+            out = plan.build_trade_ideas([a], cfg())
+        idea = out["ideas"][0]
+        self.assertEqual((idea["reference_price"], idea["stop"], idea["target"]),
+                         (1.23457, 1.2253, 1.25311))
+        args = m.call_args[0]
+        self.assertEqual((args[0], args[1], args[2]), ("EURUSD=X", 1.23457, 1.2253))
+        # rounded DOWN to the nearest tick too
+        p = plan.make_plan(an("EURUSD=X", last=1.234563, atr_pct=0.5), "haussier", cfg())
+        self.assertEqual(p["reference_price"], 1.23456)
+
+    def test_stop_comes_from_the_unrounded_last(self):
+        # last 150.1234 -> entry 150.123 ; baissier raw stop 150.1234 + 1.1259255
+        # = 151.2493255 -> ceil 151.250 (from 150.123 it would be 151.249) ; distance 1.127
+        # target 150.123 - 2.254 = 147.869
+        p = plan.make_plan(an("USDJPY=X", last=150.1234, atr_pct=0.5), "baissier", cfg())
+        self.assertEqual((p["reference_price"], p["stop"], p["target"]),
+                         (150.123, 151.25, 147.869))
+
+    def test_target_consistent_with_rounded_entry_and_stop(self):
+        cases = (  # symbol, last, atr_pct, side, (entry, stop, target)
+            ("NG=F", 3.0123, 2.5, "haussier", (3.0123, 2.8993, 3.2383)),
+            ("NG=F", 3.0123, 2.5, "baissier", (3.0123, 3.1253, 2.7863)),
+            ("USDJPY=X", 150.123, 0.5, "haussier", (150.123, 148.997, 152.375)),
+            ("USDJPY=X", 150.123, 0.5, "baissier", (150.123, 151.249, 147.871)),
+            ("GC=F", 2034.57, 0.8, "baissier", (2034.57, 2058.99, 1985.73)),
+        )
+        for symbol, last, atr_pct, side, want in cases:
+            p = plan.make_plan(an(symbol, last=last, atr_pct=atr_pct), side, cfg())
+            self.assertEqual((p["reference_price"], p["stop"], p["target"]), want,
+                             (symbol, side))
+
+    def test_rounding_invariants_sweep(self):
+        import random
+        rng = random.Random(1114)
+        for i in range(3000):
+            symbol, base = (("EURUSD=X", 1.1), ("USDJPY=X", 150.0), ("NG=F", 3.0),
+                            ("CL=F", 70.0), ("GC=F", 2000.0))[i % 5]
+            last = base * rng.uniform(0.8, 1.2)
+            side = ("haussier", "baissier")[i % 2]
+            c = cfg(plan={"stop_atr_mult": rng.choice([0.5, 1.0, 1.5, 3.0]),
+                          "target_r": rng.choice([1.0, 1.5, 2.0, 3.7])})
+            p = plan.make_plan(an(symbol, last=last, atr_pct=rng.uniform(0.2, 4.0)), side, c)
+            tick = 10 ** -p["decimals"]
+            e, s, t = p["reference_price"], p["stop"], p["target"]
+            self.assertLessEqual(abs(e - last), tick / 2 + 1e-12)
+            d = abs(e - s)
+            want = c["plan"]["target_r"] * d
+            # target rounded TOWARD the entry: never further than target_r * d, less
+            # than one tick closer
+            self.assertLessEqual(abs(t - e), want + 1e-9)
+            self.assertGreater(abs(t - e), want - tick - 1e-9)
+            if side == "haussier":
+                self.assertLess(s, e)
+                self.assertLess(e, t)
+            else:
+                self.assertLess(t, e)
+                self.assertLess(e, s)
+
+    # ---- B3 strict sides
+
+    def test_target_equal_to_entry_after_rounding_is_dropped(self):
+        # last 1.100004, ATR 0.0001 % -> raw stop 1.1000024 -> floor 1.10000 = entry:
+        # distance 0, target 1.1 = entry -> impossible plan, never sized
+        a = an("EURUSD=X", setups=["breakout_20d"], last=1.100004, atr_pct=0.0001)
+        p = plan.make_plan(a, "haussier", cfg())
+        self.assertEqual((p["reference_price"], p["stop"], p["target"]), (1.1, 1.1, 1.1))
+        with mock.patch.object(plan.sizing, "size_idea", return_value=ok_size()) as m:
+            out = plan.build_trade_ideas([a], cfg())
+        self.assertEqual(out["ideas"], [])
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "EURUSD=X",
+                           "reason": "plan impossible : stop ou cible sous zéro"}])
+        m.assert_not_called()
+
+    # ---- B4 stop-distance floor
+
+    def test_min_stop_pct_constant(self):
+        self.assertEqual(plan.MIN_STOP_PCT, 0.15)
+
+    def test_stop_in_the_noise_is_dropped(self):
+        reason = "ATR trop faible : stop dans le bruit ou l'écart de cotation"
+        analyses = [an("^K", setups=["bull_flag"], atr_pct=0.11),        # d 0.17 % kept
+                    an("EURUSD=X", setups=["breakout_20d"], last=1.1, atr_pct=0.05),
+                    an("^C", setups=["bull_flag"], short=["bear_flag"]),
+                    an("USDHKD=X", short=["breakdown_20d"], last=7.8, atr_pct=0.02)]
+        with mock.patch.object(plan.sizing, "size_idea", return_value=ok_size()) as m:
+            out = plan.build_trade_ideas(analyses, cfg())
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "EURUSD=X", "reason": reason},
+                          {"symbol": "^C", "reason": "signaux contradictoires"},
+                          {"symbol": "USDHKD=X", "reason": reason}])
+        self.assertEqual([i["symbol"] for i in out["ideas"]], ["^K"])
+        self.assertEqual([c[0][0] for c in m.call_args_list], ["^K"])   # never sized
+
+    # ---- B5 per-symbol guard
+
+    def test_arithmetic_error_in_sizing_drops_only_that_symbol(self):
+        real = plan.sizing.size_idea
+
+        def flaky(symbol, *a, **k):
+            if symbol == "^B":
+                raise ZeroDivisionError("boom")
+            return real(symbol, *a, **k)
+        analyses = [an("^A", setups=["bull_flag"]), an("^B", setups=["bull_flag"]),
+                    an("^C", setups=["bull_flag"], atr_pct=None)]
+        with mock.patch.object(plan.sizing, "size_idea", side_effect=flaky):
+            out = plan.build_trade_ideas(analyses, cfg())
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "^B", "reason": "calcul impossible (ZeroDivisionError)"},
+                          {"symbol": "^C", "reason": "ATR indisponible"}])
+        self.assertEqual([i["symbol"] for i in out["ideas"]], ["^A"])
+
+    def test_arithmetic_error_in_planning_drops_only_that_symbol(self):
+        real = plan.make_plan
+
+        def flaky(a, side, config):
+            if a["symbol"] == "^A":
+                raise OverflowError("big")
+            return real(a, side, config)
+        with mock.patch.object(plan, "make_plan", side_effect=flaky):
+            out = plan.build_trade_ideas(
+                [an("^A", setups=["bull_flag"]), an("^B", setups=["bull_flag"])], cfg())
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "^A", "reason": "calcul impossible (OverflowError)"}])
+        self.assertEqual([i["symbol"] for i in out["ideas"]], ["^B"])
+
+    # ---- B6 display limit reason and ties
+
+    def test_ties_at_cutoff(self):
+        analyses = [an("^%s" % c, setups=["breakout_20d"]) for c in "FEDCBA"]
+        out = plan.build_trade_ideas(analyses, cfg())
+        self.assertEqual([i["symbol"] for i in out["ideas"]], ["^A", "^B", "^C", "^D", "^E"])
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "^F", "reason": "au-delà des 5 idées affichées (score 2)"}])
+        self.assertEqual(out["ties_at_cutoff"], 1)
+        # a lower score below the cutoff is not a tie
+        analyses[0] = an("^F", setups=["breakout_20d"], trend="down")      # score 1
+        out = plan.build_trade_ideas(analyses, cfg())
+        self.assertEqual(out["skipped"][0]["reason"], "au-delà des 5 idées affichées (score 1)")
+        self.assertEqual(out["ties_at_cutoff"], 0)
+        self.assertEqual(plan.build_trade_ideas([], cfg())["ties_at_cutoff"], 0)
+
+    def test_correlated_skips_are_not_ties(self):
+        analyses = [an(s, setups=["breakout_20d"]) for s in ("USDJPY=X", "USDCHF=X", "USDCAD=X")]
+        out = plan.build_trade_ideas(analyses, cfg())
+        self.assertEqual(out["ties_at_cutoff"], 0)
+
+    # ---- B7 cumulated risk in cents
+
+    def test_over_cap_exactly_at_the_cap_is_false(self):
+        out = self.run_sizes([ok_size(500.0)] * 4)
+        self.assertEqual(out["total_risk_usd"], 2000.0)
+        self.assertIs(out["over_cap"], False)
+        self.assertEqual(out["max_ideas_within_cap"], 4)
+        # 0.7 % x 4 to_confirm against a 2.8 % cap: equal in cents (floats differ)
+        c = cfg(risk={"per_trade_pct": 0.7, "max_total_pct": 2.8},
+                ideas={"max_shown": 10, "max_per_exposure": 5})
+        self.assertNotEqual(4 * (100000 * 0.7 / 100) / 100000 * 100, 2.8)   # the old trap
+        out = self.run_sizes([status_size("to_confirm")] * 4, c)
+        self.assertEqual(out["total_risk_usd"], 2800.0)
+        self.assertIs(out["over_cap"], False)
+        self.assertEqual(out["max_ideas_within_cap"], 4)
+
+    def test_over_cap_one_cent_above_is_true(self):
+        out = self.run_sizes([ok_size(500.0)] * 3 + [ok_size(500.01)])
+        self.assertEqual(out["total_risk_usd"], 2000.01)
+        self.assertIs(out["over_cap"], True)
+        self.assertEqual(out["max_ideas_within_cap"], 3)
+
+    def test_max_ideas_within_cap_with_mixed_statuses(self):
+        sizes = [ok_size(400.0), status_size("to_confirm"), status_size("too_wide"),
+                 ok_size(300.0), ok_size(450.0)]
+        # cap 1 % = 1000 ; counted risks 500, 450, 400, 300 (too_wide excluded)
+        c = cfg(risk={"max_total_pct": 1.0}, ideas={"max_shown": 10, "max_per_exposure": 5})
+        out = self.run_sizes(list(sizes), c)
+        self.assertEqual(out["total_risk_usd"], 1650.0)
+        self.assertIs(out["over_cap"], True)
+        self.assertEqual(out["max_ideas_within_cap"], 2)      # 500 + 450 <= 1000 < +400
+        out = self.run_sizes(list(sizes))                     # cap 2 %
+        self.assertIs(out["over_cap"], False)
+        self.assertEqual(out["max_ideas_within_cap"], 4)      # the four counted ideas
+        out = self.run_sizes([status_size("too_wide")] * 2)
+        self.assertEqual((out["max_ideas_within_cap"], out["over_cap"]), (0, False))
+        self.assertEqual(plan.build_trade_ideas([], cfg())["max_ideas_within_cap"], 0)
+
+    def test_over_cap_false_exactly_when_all_counted_ideas_fit(self):
+        import random
+        rng = random.Random(2811)
+        for _ in range(400):
+            n = rng.randint(1, 10)
+            sizes = []
+            for _ in range(n):
+                r = rng.random()
+                if r < 0.15:
+                    sizes.append(status_size("too_wide"))
+                elif r < 0.35:
+                    sizes.append(status_size("to_confirm"))
+                else:
+                    sizes.append(ok_size(round(rng.uniform(1.0, 500.0), 2)))
+            counted = sum(1 for s in sizes if s["status"] != "too_wide")
+            c = cfg(risk={"max_total_pct": rng.choice([0.5, 1.0, 1.5, 2.0, 2.8, 4.0])},
+                    ideas={"max_shown": 10, "max_per_exposure": 5})
+            out = self.run_sizes(sizes, c)
+            self.assertEqual(out["over_cap"] is False,
+                             out["max_ideas_within_cap"] == counted)
+            self.assertLessEqual(out["max_ideas_within_cap"], counted)
+
+    def test_total_leverage(self):
+        out = self.run_sizes([lev_size(500.0, 1.234), status_size("to_confirm"),
+                              lev_size(400.0, 2.5), status_size("too_wide")])
+        self.assertEqual(out["total_leverage"], 3.73)
+        out = self.run_sizes([status_size("to_confirm")])
+        self.assertEqual(out["total_leverage"], 0.0)
+        self.assertEqual(plan.build_trade_ideas([], cfg())["total_leverage"], 0.0)
+
+    # ---- B9 labels aligned with the page
+
+    def test_why_labels_match_the_page_chips(self):
+        a = an("^A", setups=["reclaim_ma20", "oversold_bounce"])
+        _, why = plan.score(a, "haussier", ["reclaim_ma20", "oversold_bounce"])
+        self.assertEqual(why, ["+2 reprise de la moyenne 20 j",
+                               "+2 rebond depuis la survente"])
 
 
 if __name__ == "__main__":

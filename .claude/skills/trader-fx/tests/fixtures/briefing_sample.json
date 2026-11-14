@@ -6,9 +6,9 @@
   },
   "market_state": "open",
   "counts": {
-    "requested": 11,
-    "fetched": 10,
-    "scanned": 10,
+    "requested": 12,
+    "fetched": 11,
+    "scanned": 11,
     "failed": [
       {
         "symbol": "USDSEK=X",
@@ -226,6 +226,21 @@
         "setups_short": [
           "overbought"
         ]
+      },
+      {
+        "symbol": "^GDAXI",
+        "name": "DAX",
+        "last": 21352.866712489336,
+        "rsi": 83.01507753980214,
+        "atr_pct": 0.44971040796022166,
+        "trend": "up",
+        "setups": [
+          "breakout_20d"
+        ],
+        "last_bar_date": "2026-11-09",
+        "setups_short": [
+          "overbought"
+        ]
       }
     ],
     "clusters": []
@@ -275,10 +290,10 @@
         "week_low": 1.157364416006171,
         "high20": 1.1895027224281958,
         "low20": 1.1394107151667365,
-        "asia_high": 1.1534975999999997,
-        "asia_low": 1.1513087999999998,
-        "day_high": 1.1538431999999996,
-        "day_low": 1.1513087999999998,
+        "asia_high": 1.1905457,
+        "asia_low": 1.1882866,
+        "day_high": 1.1909024,
+        "day_low": 1.1882866,
         "asia_complete": true
       },
       {
@@ -320,6 +335,21 @@
         "week_low": 7977.41046049222,
         "high20": 8198.931407816903,
         "low20": 7853.660292524132,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null,
+        "asia_complete": null
+      },
+      {
+        "symbol": "^GDAXI",
+        "name": "DAX",
+        "prev_high": 21374.219579201825,
+        "prev_low": 21331.513845776848,
+        "week_high": 21120.770335179666,
+        "week_low": 20796.725130962343,
+        "high20": 21374.219579201825,
+        "low20": 20474.11439895997,
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
@@ -423,7 +453,8 @@
       "currency": "USD",
       "capital": 100000,
       "risk_per_trade_usd": 500.0,
-      "leverage_max": 30
+      "leverage_max": 30,
+      "source": "default"
     },
     "ideas": [
       {
@@ -437,11 +468,12 @@
           "overbought_reject"
         ],
         "trend": "up",
-        "reference_price": 74.25600000000001,
-        "stop": 74.89,
-        "target": 73.0,
+        "reference_price": 74.256,
+        "stop": 74.888,
+        "target": 72.992,
         "rr": 2.0,
         "atr": 0.421191,
+        "decimals": 3,
         "size": {
           "status": "too_wide",
           "lots": null,
@@ -457,7 +489,9 @@
           "+2 rejet depuis le surachat",
           "−1 tendance haussière (à contre-sens)",
           "+1 RSI au-dessus de 70 (surachat)"
-        ]
+        ],
+        "last_bar_date": "2026-11-09",
+        "since_close": null
       },
       {
         "rank": 2,
@@ -470,17 +504,18 @@
           "overbought"
         ],
         "trend": "up",
-        "reference_price": 1.1883144080201757,
+        "reference_price": 1.18831,
         "stop": 1.18029,
-        "target": 1.20434,
+        "target": 1.20435,
         "rr": 2.0,
         "atr": 0.005344,
+        "decimals": 5,
         "size": {
           "status": "ok",
           "lots": 0.62,
           "units": 62000,
           "size": null,
-          "risk_usd": 497.51,
+          "risk_usd": 497.24,
           "leverage": 0.74,
           "pip_value_usd_per_lot": 10.0,
           "limited_by": "risque",
@@ -490,7 +525,13 @@
           "+2 cassure du plus haut 20 j",
           "+1 tendance haussière",
           "−1 RSI déjà au-dessus de 70"
-        ]
+        ],
+        "last_bar_date": "2026-11-09",
+        "since_close": {
+          "last": 1.1890980017757904,
+          "stop_crossed": false,
+          "target_crossed": false
+        }
       },
       {
         "rank": 3,
@@ -503,11 +544,12 @@
           "overbought"
         ],
         "trend": "up",
-        "reference_price": 8190.740667149755,
+        "reference_price": 8190.74,
         "stop": 8135.48,
-        "target": 8301.24,
+        "target": 8301.26,
         "rr": 2.0,
         "atr": 36.834613,
+        "decimals": 2,
         "size": {
           "status": "to_confirm",
           "lots": null,
@@ -523,24 +565,37 @@
           "+2 cassure du plus haut 20 j",
           "+1 tendance haussière",
           "−1 RSI déjà au-dessus de 70"
-        ]
+        ],
+        "last_bar_date": "2026-11-09",
+        "since_close": {
+          "last": 8110.0,
+          "stop_crossed": true,
+          "target_crossed": false
+        }
       }
     ],
     "skipped": [
       {
         "symbol": "GBPUSD=X",
         "reason": "corrélée à EURUSD=X"
+      },
+      {
+        "symbol": "^GDAXI",
+        "reason": "au-delà des 3 idées affichées (score 2)"
       }
     ],
-    "total_risk_usd": 997.51,
+    "total_risk_usd": 997.24,
     "total_risk_pct": 1.0,
-    "max_total_pct": 2.0,
-    "over_cap": false
+    "max_total_pct": 0.75,
+    "over_cap": true,
+    "max_ideas_within_cap": 1,
+    "ties_at_cutoff": 1,
+    "total_leverage": 0.74
   },
   "warnings": [
     "Sans données : 1 symbole(s) en échec (USDSEK=X).",
     "Calendrier économique partiel : next week: pas encore publié (HTTP 404).",
-    "Barres 1 h indisponibles pour 2 symbole(s) en alerte (^FCHI, CL=F) : plage asiatique non calculée."
+    "Barres 1 h indisponibles pour 2 symbole(s) en alerte (CL=F, ^GDAXI) : plage asiatique non calculée."
   ],
   "disclaimer": "Liste de graphiques qui ont matché une règle. Pas un conseil. Données Yahoo, retardées."
 }

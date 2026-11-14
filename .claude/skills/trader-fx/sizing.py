@@ -2,9 +2,13 @@
 
 Python 3 standard library only. Every public sizer returns the same `size`
 dictionary with ALL nine keys always present; fields that do not apply are None.
-A size that cannot be computed is `to_confirm`, never a made-up figure, and the
-real risk of a sized idea never exceeds `risk_usd = capital * risk_pct / 100`
-(sizes are always rounded down).
+A size that cannot be computed is `to_confirm`, never a made-up figure, and sizes
+are always rounded down. The risk at the stop never exceeds
+`risk_usd = capital * risk_pct / 100` for pairs quoted in USD and for USD-base
+pairs (their loss is converted at the stop rate, `|entry - stop| / stop`); for
+crosses the quote-to-USD rate at the stop is unknown, so the loss is converted at
+the entry-day rate and can differ by roughly the stop distance in percent. Gaps and
+slippage are never included.
 """
 import math
 
@@ -101,7 +105,14 @@ def size_forex(symbol, entry, stop, prices, capital, risk_pct, leverage_max):
                 f"conversion de devise impossible : taux en USD introuvable pour {ccy}")
 
     risk_usd = capital * risk_pct / 100.0
-    loss_per_unit = dist * q2u
+    if base == "USD" and quote != "USD":
+        # the loss is in the quote currency and is realised AT THE STOP, where one unit
+        # of quote is worth 1 / stop USD: exact for both directions
+        loss_per_unit = dist / float(stop)
+    else:
+        # USD quote: exact (q2u = 1); cross: converted at the entry-day rate, the
+        # quote-to-USD rate at the stop is unknown (documented residual)
+        loss_per_unit = dist * q2u
     units = _steps(risk_usd / loss_per_unit, FOREX_STEP_UNITS) * FOREX_STEP_UNITS
     if units < FOREX_STEP_UNITS:
         return _too_wide(NOTE_TOO_WIDE)

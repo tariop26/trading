@@ -52,11 +52,68 @@ class TestForex(unittest.TestCase):
         self.assertIsNone(s["note"])
 
     def test_usdjpy(self):
+        # USD-base pair: the JPY loss converts to USD at the STOP rate (1/149.25):
+        # loss/unit = 0.75 / 149.25 -> 500 / 0.0050251256 = 99 500 -> 99 000 units
         s = fx("USDJPY=X", 150.00, 149.25, {"USDJPY=X": 150.0})
         self.assertEqual(s["status"], "ok")
-        self.assertEqual(s["lots"], 1.0)
-        self.assertAlmostEqual(s["pip_value_usd_per_lot"], 6.6667, 4)
-        self.assertEqual(s["leverage"], 1.0)
+        self.assertEqual(s["units"], 99000)
+        self.assertEqual(s["lots"], 0.99)
+        self.assertEqual(s["risk_usd"], 497.49)
+        self.assertEqual(s["leverage"], 0.99)
+        self.assertEqual(s["pip_value_usd_per_lot"], 6.6667)   # still at the entry rate
+        self.assertEqual(s["limited_by"], "risque")
+
+    def test_usdjpy_baissier_converts_at_the_stop_rate(self):
+        # loss/unit = 3 / 153 -> 500 / 0.0196078 = 25 500 -> 25 000 units
+        s = fx("USDJPY=X", 150.00, 153.00, {"USDJPY=X": 150.0})
+        self.assertEqual(s["status"], "ok")
+        self.assertEqual(s["units"], 25000)
+        self.assertEqual(s["lots"], 0.25)
+        self.assertEqual(s["risk_usd"], 490.20)
+
+    def test_entry_rate_conversion_would_overshoot_the_budget(self):
+        # the old entry-rate formula (0.75 / 150) sized 1.00 lot, whose true loss at the
+        # stop is 100 000 * 0.75 / 149.25 = 502.51 USD: more than the 500 budget
+        s = fx("USDJPY=X", 150.00, 149.25, {"USDJPY=X": 150.0})
+        self.assertGreater(100000 * 0.75 / 149.25, 500.0)
+        self.assertLess(s["units"], 100000)
+
+    def test_usd_base_true_loss_never_exceeds_the_budget(self):
+        """Brute force: the trade is replayed with its two cash legs in the quote
+        currency, the loss is converted to USD at the stop's own USD<quote> rate. This
+        does not call the sizing formula."""
+        rng = random.Random(20261115)
+        bases = {"USDJPY=X": 150.0, "USDCHF=X": 0.88, "USDCAD=X": 1.39, "USDZAR=X": 18.2}
+        ok_count = 0
+        symbols = list(bases)
+        for i in range(2400):
+            symbol = symbols[i % 4]
+            decimals = 3 if symbol[3:6] == "JPY" else 5
+            entry = round(bases[symbol] * (1 + rng.uniform(-0.05, 0.05)), decimals)
+            side = "haussier" if (i // 4) % 2 == 0 else "baissier"
+            frac = rng.uniform(0.003, 0.06)
+            stop = round(entry * (1 - frac) if side == "haussier" else entry * (1 + frac),
+                         decimals)
+            s = fx(symbol, entry, stop, {symbol: entry})
+            if s["status"] != "ok":
+                continue
+            ok_count += 1
+            units = s["units"]                       # USD units (the base currency)
+            if side == "haussier":
+                paid_quote = units * entry           # quote paid to take the USD
+                received_quote = units * stop        # quote received at the stop
+            else:
+                received_quote = units * entry
+                paid_quote = units * stop
+            loss_quote = paid_quote - received_quote
+            usd_per_quote_at_stop = 1.0 / stop       # USD<quote> trades at `stop` then
+            true_loss = loss_quote * usd_per_quote_at_stop
+            self.assertGreater(true_loss, 0)
+            self.assertLessEqual(true_loss, 500.0 + 1e-9, (symbol, side, entry, stop, units))
+            # and the displayed risk is that true loss, to the cent
+            self.assertAlmostEqual(s["risk_usd"], true_loss, delta=0.005 + 1e-9)
+            self.assertEqual(units % 1000, 0)
+        self.assertGreater(ok_count, 2000)
 
     def test_cross_converted_through_a_dollar_pair_and_float_floor(self):
         prices = {"GBPCHF=X": 1.10, "USDCHF=X": 0.88, "GBPUSD=X": 1.30}
@@ -138,8 +195,12 @@ class TestForex(unittest.TestCase):
             self.assertEqual(s["units"] % 1000, 0)
             self.assertLessEqual(s["leverage"], 30)
             quote = symbol[3:6]
-            q2u = sizing.usd_rate(quote, prices)
-            exact = s["units"] * abs(entry - stop) * q2u
+            if symbol[:3] == "USD":
+                # USD-base pair: the quote converts to USD at the stop rate
+                exact = s["units"] * abs(entry - stop) / stop
+            else:
+                q2u = sizing.usd_rate(quote, prices)
+                exact = s["units"] * abs(entry - stop) * q2u
             self.assertLessEqual(exact, 500.0 * (1 + 1e-9))
         self.assertGreater(ok_count, 20)
 

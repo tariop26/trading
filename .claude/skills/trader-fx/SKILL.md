@@ -142,19 +142,50 @@ des règles haussières, calculées sur les clôtures (30 séances minimum).
 - Diversification : chaque idée porte des expositions par devise (une idée
   haussière sur `EURUSD=X` est plus EUR et moins USD). Au plus 2 idées retenues
   par exposition (`ideas.max_per_exposure`) : la suivante est écartée avec la
-  raison « corrélée à <symbole> ». Au plus 5 idées affichées (`ideas.max_shown`).
+  raison « corrélée à <symbole> ». Au plus 5 idées affichées (`ideas.max_shown`) :
+  les suivantes sont écartées avec « au-delà des 5 idées affichées (score S) ».
   Hors forex, l'exposition est le symbole lui-même.
-- Plan : entrée = dernière clôture ; stop = 1,5 ATR de l'entrée (sous l'entrée
-  pour une idée haussière, au-dessus pour une baissière) ; cible = 2R,
-  c'est-à-dire 2 fois la distance au stop, du côté opposé ; rapport 1:2. Arrondi
-  au dixième de pip (2 décimales hors forex), stop éloigné et cible rapprochée.
-  ATR indisponible : idée écartée.
+- Égalités : à score égal (et à nombre de déclencheurs égal), l'ordre est
+  alphabétique. `ties_at_cutoff` compte les idées écartées par la limite
+  d'affichage qui ont le même score que la dernière affichée, et la page le dit
+  (« N autres idées ont le même score que la dernière affichée »). Rien n'est
+  choisi pour l'utilisateur.
+- Plan : entrée = dernière clôture, arrondie au pas de prix le plus proche ;
+  stop = 1,5 ATR de la clôture (sous l'entrée pour une idée haussière, au-dessus
+  pour une baissière), arrondi en s'éloignant de l'entrée ; cible = 2 fois la
+  distance arrondie entrée-stop, du côté opposé, arrondie en se rapprochant de
+  l'entrée. Pas de prix : forex au dixième de pip (5 décimales, 3 pour une
+  cotation en JPY) ; autres instruments selon le prix (sous 10 : 4 décimales,
+  sous 100 : 3, sinon 2) ; chaque idée porte ses `decimals`. La taille est
+  calculée sur l'entrée et le stop arrondis, ceux qui sont affichés. `rr` est le
+  rapport nominal (2) : à cause des arrondis dirigés, le rapport réalisé est de
+  1,998 à 1,999. ATR indisponible : idée écartée. Un plan dont l'ordre stop <
+  entrée < cible (haussier) ou cible < entrée < stop (baissier) ne tient pas
+  après arrondi, ou dont le stop ou la cible n'est pas positif, est écarté
+  (« plan impossible »). Une distance au stop sous 0,15 % du prix est écartée
+  (« ATR trop faible : stop dans le bruit ou l'écart de cotation »). Un calcul
+  qui échoue sur un symbole l'écarte seul (« calcul impossible (<erreur>) »).
 - Taille : risque fixé = 0,5 % du capital par idée (500 USD pour 100 000 USD),
-  arrondi toujours vers le bas, donc le risque réel ne dépasse jamais 0,5 %.
+  taille toujours arrondie vers le bas. Le risque affiché au stop est exact pour
+  les paires cotées en USD (EURUSD...) et pour les paires dont la base est l'USD
+  (USDJPY, USDCHF, USDCAD...) : leur perte est convertie au cours du stop
+  (`|entrée − stop| / stop` USD par unité). Pour les croisées (ni base ni
+  cotation en USD, EURJPY, GBPCHF...), le cours de la devise de cotation en USD
+  au moment du stop est inconnu : le chiffre est calculé au cours du jour de
+  l'entrée et peut s'écarter du vrai d'environ la taille du stop en pourcentage
+  (un stop à 2 % : environ 2 % d'écart). Les écarts d'ouverture (gaps) et le
+  glissement ne sont jamais inclus.
   Forex : lot de 100 000 unités, pas de 0,01 lot, conversion de la devise de
   cotation en USD par la paire en dollar du briefing, plafond de levier 30:1 (la
   taille est réduite si besoin, `limited_by` vaut alors `levier`). Indices et
   matières premières : taille calculée avec la table `contracts`.
+- Date et caducité : chaque idée porte la date de la clôture sur laquelle elle
+  repose (`last_bar_date`). Quand des barres 1 h existent après cette clôture,
+  `since_close` donne le dernier cours 1 h et dit si le stop ou la cible a déjà
+  été franchi depuis. Une idée dont le stop est déjà franchi est caduque : la
+  page et le résumé le disent (« Stop déjà franchi depuis la clôture : plan
+  caduc. », « stop déjà franchi »). Pas de barres 1 h (week-end, matières
+  premières sans données) : `since_close` vaut `null`.
 - Statuts de taille : `ok` ; `too_wide` quand moins de 0,01 lot (ou moins que le
   minimum du contrat) tient dans le risque fixé, ou quand le plafond de levier
   passe sous le minimum ; `to_confirm` quand une taille ne peut pas être
@@ -162,15 +193,30 @@ des règles haussières, calculées sur les clôtures (30 séances minimum).
   distance au stop nulle). Jamais une taille inventée.
 - Risque cumulé : somme des risques réels des idées `ok`, plus le risque fixé
   (0,5 %) pour chaque idée `to_confirm`. Au-dessus de `risk.max_total_pct`
-  (2 % par défaut), `over_cap` vaut vrai et le résumé et la page le disent :
-  c'est un avertissement, aucune idée n'est supprimée.
+  (2 % par défaut, comparé au centime), `over_cap` vaut vrai et le résumé et la
+  page le disent avec le nombre maximal d'idées qui tiennent ensemble dans le
+  plafond (`max_ideas_within_cap`, calculé avec les risques les plus grands :
+  « au plus N idées ouvertes en même temps ») : c'est un avertissement, aucune
+  idée n'est supprimée et le message ne choisit jamais lesquelles ouvrir. Le
+  levier cumulé des idées `ok` (`total_leverage`) suit la ligne de risque.
+- Avec les valeurs par défaut, 5 idées affichées à 0,5 % chacune font 2,5 %, au-
+  dessus du plafond de 2 % : c'est voulu, et le bandeau dit combien d'idées
+  peuvent être ouvertes en même temps.
 
 ## Configuration
 
-`trader/fx/config.json` est facultatif : un fichier absent donne les valeurs par
-défaut, sans erreur. Il contient le capital de l'utilisateur : il est ignoré par
-git. `fx.py brief --config PATH` lit un autre fichier. Les sections absentes
-reprennent leurs valeurs par défaut, section par section.
+`trader/fx/config.json` est facultatif : à ce chemin par défaut, un fichier absent
+donne les valeurs par défaut, sans erreur ; le résumé et la page l'indiquent alors
+par « (valeurs par défaut) ». Il contient le capital de l'utilisateur : il est
+ignoré par git. `fx.py brief --config PATH` lit un autre fichier ; un chemin donné
+explicitement doit exister, sinon une seule ligne (« Fichier de configuration
+introuvable : PATH. »), code de sortie 1, aucun appel réseau, aucun fichier écrit.
+Les sections absentes reprennent leurs valeurs par défaut, section par section.
+`trade_ideas.account.source` vaut `file` quand un fichier a été lu, `default`
+sinon. La ligne de compte du résumé et de la page (« Compte : 100 000 USD ·
+risque par idée 0.5 % (500.00 USD) · levier max 30:1 ») dit sur quelle base les
+tailles sont calculées. Une clé de `contracts` qui ne correspond à aucun symbole
+demandé, ou qui est une paire forex, donne un avertissement et est ignorée.
 
 | clé | défaut |
 | --- | --- |
@@ -293,6 +339,25 @@ le capital. Un symbole absent de la table reste `to_confirm`.
 - Aucun calcul du financement (swap), du spread ni de la marge exacte du
   courtier ; le levier affiché est la valeur de la position divisée par le
   capital.
+- Le risque au stop des paires croisées est calculé au cours du jour de l'entrée
+  (voir « Taille ») ; aucun chiffre n'inclut d'écart d'ouverture ni de glissement.
+- Une distance au stop sous 0,15 % du prix est refusée (« ATR trop faible ») :
+  une paire arrimée ou presque immobile (USDHKD...) ne donne jamais d'idée.
+- Valeur du pip des cotations à très grande valeur (USDIDR, USDKRW) : affichée
+  avec 4 décimales ; le pip usuel de ces paires peut différer de 0,0001 : à
+  vérifier chez le courtier.
+- Un symbole de six lettres qui n'est pas une paire de devises (métaux, crypto)
+  écrit `XXXYYY=X` serait dimensionné comme du forex en lots : ne pas le mettre
+  dans la liste forex.
+- L'exemple `^FCHI` de la table `contracts` fige un cours EUR/USD dans
+  `usd_per_point` (valeur d'un point en EUR multipliée par ce cours) : le
+  recalculer avec le cours du jour.
+- Un `usd_per_point` faux (par exemple 10 fois trop grand) donne une taille
+  plausible mais fausse dans la même proportion : vérifier chaque valeur chez le
+  courtier.
+- `since_close` compare la date locale de la dernière barre journalière du
+  symbole à des dates UTC : approximation possible d'un jour pour les marchés
+  éloignés d'UTC.
 - Devise de compte : USD seulement (version 1).
 - Les règles ne créent jamais une idée à partir d'un état seul (`oversold`,
   `overbought`).
