@@ -58,3 +58,18 @@ def session_table(now_utc):
             "active": opened <= now < closed,
         })
     return rows
+
+
+def entry_session(when_utc, sessions=SESSIONS):
+    """Name of the session of an entry: among the sessions active at `when_utc` (same hours
+    as `session_table`), the one that opened most recently; "hors session" when none is."""
+    now = _aware_utc(when_utc)
+    best = None
+    for name, (tzname, open_h, close_h) in sessions.items():
+        tz = ZoneInfo(tzname)
+        day = now.astimezone(tz).date()
+        opened = _local_at(day, open_h, tz)
+        closed = _local_at(day, close_h, tz)
+        if opened <= now < closed and (best is None or opened > best[0]):
+            best = (opened, name)
+    return best[1] if best else "hors session"
