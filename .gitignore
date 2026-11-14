@@ -6,3 +6,4 @@ __pycache__/
 # Sorties du jour de trader-fx (generees)
 trader/fx/briefing.json
 trader/fx/briefing.html
+trader/fx/config.json
