@@ -167,6 +167,53 @@ class TestLevels(unittest.TestCase):
         self.assertEqual(lv["high20"], 2.0)
         self.assertEqual(lv["low20"], 1.0)
 
+    def friday_bars(self):
+        # Previous week 11-02..11-06 (Mon..Fri); Friday 11-06 is the last complete bar
+        # of a week that just ended when the briefing runs on Mon 11-09 or the weekend.
+        # The week before (10-26..10-30) must never be the answer.
+        def bar(d, h, l):
+            return (d, 1.0, h, l, 1.0)
+        return [bar(date(2026, 10, 27), 8.00, 0.50), bar(date(2026, 10, 30), 7.00, 0.60),
+                bar(date(2026, 11, 2), 1.50, 1.10), bar(date(2026, 11, 3), 1.60, 1.20),
+                bar(date(2026, 11, 6), 1.40, 1.05)]
+
+    def test_levels_monday_uses_the_week_that_just_ended(self):
+        lv = signals.levels(self.friday_bars(), today=date(2026, 11, 9))
+        self.assertEqual((lv["week_high"], lv["week_low"]), (1.60, 1.05))
+
+    def test_levels_weekend_matches_monday(self):
+        monday = signals.levels(self.friday_bars(), today=date(2026, 11, 9))
+        self.assertEqual(signals.levels(self.friday_bars(), today=date(2026, 11, 7)), monday)
+        self.assertEqual(signals.levels(self.friday_bars(), today=date(2026, 11, 8)), monday)
+
+    def test_levels_midweek_today_unchanged(self):
+        bars = self.friday_bars() + [(date(2026, 11, 9), 1.0, 1.3, 1.15, 1.0),
+                                     (date(2026, 11, 10), 1.0, 1.35, 1.12, 1.0)]
+        base = signals.levels(bars)
+        for day in (10, 11, 12, 13):
+            self.assertEqual(signals.levels(bars, today=date(2026, 11, day)), base)
+        self.assertEqual((base["week_high"], base["week_low"]), (1.60, 1.05))
+
+    def test_analyze_on_monday_returns_friday_week_levels(self):
+        # ~34 weekday bars ending Fri 2026-11-06; the previous week is Mon 11-02..Fri 11-06.
+        end = date(2026, 11, 6)
+        t0 = ts(2026, 9, 21)
+        bars = []
+        for i in range(47):
+            t = t0 + i * DAY
+            d = datetime.fromtimestamp(t, timezone.utc).date()
+            if d.weekday() >= 5 or d > end:
+                continue
+            hi = 9.0 if d < date(2026, 11, 2) else 1.0 + (d.day % 7) * 0.01
+            bars.append((t, 1.0, hi, 0.5 if d < date(2026, 11, 2) else 0.9, 1.0))
+        wk = [b for b in bars if date(2026, 11, 2) <= datetime.fromtimestamp(
+            b[0], timezone.utc).date() <= end]
+        s = data.Series(bars=bars, gmtoffset=0)
+        r = signals.analyze("X", "X", s, utc(2026, 11, 9, 7))  # Monday morning
+        self.assertEqual(r["last_bar_date"], "2026-11-06")
+        self.assertEqual(r["levels"]["week_high"], max(b[2] for b in wk))
+        self.assertEqual(r["levels"]["week_low"], 0.9)
+
 
 class TestAsiaRange(unittest.TestCase):
     def hourly(self):

@@ -56,6 +56,11 @@ def find_setups(closes):
 
 # ---------------------------------------------------------------- daily bars
 
+def _local_date(now_utc, gmtoffset):
+    """Calendar date of now_utc in the series' own timezone."""
+    return (now_utc.astimezone(timezone.utc) + timedelta(seconds=gmtoffset)).date()
+
+
 def complete_daily(series, now_utc):
     """-> [(local date, o, h, l, c)], one bar per date, oldest first.
 
@@ -63,7 +68,7 @@ def complete_daily(series, now_utc):
     series' own timezone is still in progress and is dropped; on a weekend the last
     bar is Friday's, which is complete, so it stays."""
     off = timedelta(seconds=series.gmtoffset)
-    today = (now_utc.astimezone(timezone.utc) + off).date()
+    today = _local_date(now_utc, series.gmtoffset)
     out = {}
     for ts, o, h, l, c in series.bars:
         d = (datetime.fromtimestamp(ts, timezone.utc) + off).date()
@@ -103,14 +108,21 @@ def trend(closes):
     return "mixed"
 
 
-def levels(daily):
-    """Previous day's high/low, previous ISO week's high/low (the week before the
-    last bar's week) and the 20-session high/low. Missing data gives None."""
+def levels(daily, today=None):
+    """Previous day's high/low, previous ISO week's high/low and the 20-session
+    high/low. Missing data gives None.
+
+    The previous week is relative to `today` (default: the last bar's date). On a
+    Saturday or Sunday, today moves to the next Monday, so the previous week is the
+    one that just ended (Friday's week)."""
     if not daily:
         return {"prev_high": None, "prev_low": None, "week_high": None,
                 "week_low": None, "high20": None, "low20": None}
     last_d, _, ph, pl, _ = daily[-1]
-    wk = (last_d - timedelta(days=7)).isocalendar()[:2]
+    ref = today or last_d
+    if ref.weekday() >= 5:
+        ref += timedelta(days=7 - ref.weekday())
+    wk = (ref - timedelta(days=7)).isocalendar()[:2]
     week = [b for b in daily if b[0].isocalendar()[:2] == wk]
     last20 = daily[-20:]
     return {
@@ -165,6 +177,6 @@ def analyze(symbol, name, daily, now_utc):
         "atr_pct": (a / last * 100.0) if (a is not None and last) else None,
         "trend": trend(closes),
         "setups": tags,
-        "levels": levels(bars),
+        "levels": levels(bars, _local_date(now_utc, daily.gmtoffset)),
         "last_bar_date": bars[-1][0].isoformat(),
     }
