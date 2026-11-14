@@ -11,6 +11,7 @@ import unittest
 
 import briefing
 import fx
+import make_sample_fixture
 import page
 import test_briefing as tb
 
@@ -20,6 +21,21 @@ TEMPLATE = os.path.join(os.path.dirname(HERE), "report_template.html")
 DISCLAIMER = ("Liste de graphiques qui ont matché une règle. Pas un conseil. "
               "Données Yahoo, retardées.")
 MARKER = "<!--BRIEFING_JSON-->"
+FORBIDDEN_WORDS = tb.FORBIDDEN_WORDS
+IDEAS_NOTE = ("Idées de plan mécaniques, issues des règles ci-dessous. À valider, pas des "
+              "conseils. Prix de référence : dernière clôture.")
+OVER_CAP_BANNER = ("Risque cumulé au-dessus du plafond : n'ouvrez pas toutes ces idées en "
+                   "même temps.")
+NEW_LABELS = (("breakdown_20d", "Cassure du plus bas 20 j"),
+              ("bear_flag", "Drapeau baissier"),
+              ("lose_ma20", "Perte de la moyenne 20 j"),
+              ("overbought", "Surachat"),
+              ("overbought_reject", "Rejet depuis le surachat"))
+OLD_LABELS = (("breakout_20d", "Cassure du plus haut 20 j"),
+              ("bull_flag", "Drapeau haussier"),
+              ("reclaim_ma20", "Reprise de la moyenne 20 j"),
+              ("oversold", "Survente"),
+              ("oversold_bounce", "Rebond depuis la survente"))
 
 
 def read(path):
@@ -172,7 +188,39 @@ class TestTemplate(unittest.TestCase):
         self.assertIn("max(16px", t)
 
     def test_template_has_no_forbidden_words(self):
-        self.assertIsNone(re.search(r"(?i)\b(achat|acheter|buy|gagnant|profit)\b", self.t))
+        # FORBIDDEN_WORDS is a RAW string with a real \b (a previous test typed a backspace
+        # and matched nothing): it must catch a whole word and spare a substring
+        self.assertEqual(FORBIDDEN_WORDS.count(chr(8)), 0)
+        self.assertIn(r"\b(achat|acheter|vente|vendre|buy|sell|gagnant|profit)\b",
+                      FORBIDDEN_WORDS)
+        self.assertRegex("un achat", FORBIDDEN_WORDS)
+        self.assertRegex("Sell the rip", FORBIDDEN_WORDS)
+        self.assertRegex("on peut vendre", FORBIDDEN_WORDS)
+        self.assertNotRegex("surachat", FORBIDDEN_WORDS)
+        self.assertNotRegex("ventes", FORBIDDEN_WORDS)
+        self.assertNotRegex("Surachat, Rejet depuis le surachat", FORBIDDEN_WORDS)
+        self.assertIsNone(re.search(FORBIDDEN_WORDS, self.t))
+        self.assertIsNotNone(re.search(FORBIDDEN_WORDS, self.t + " <p>un achat</p>"))
+        self.assertIsNone(re.search(FORBIDDEN_WORDS, page.render_page(sample(), TEMPLATE)))
+
+    def test_template_never_injects_html(self):
+        for word in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write",
+                     "createContextualFragment", "eval(", "new Function"):
+            self.assertNotIn(word, self.t, word)
+
+    def test_ideas_section_is_between_header_and_resume(self):
+        t = self.t
+        for marker in ("</header>", 'id="s-ideas"', 'id="s-resume"'):
+            self.assertEqual(t.count(marker), 1, marker)
+        self.assertLess(t.index("</header>"), t.index('id="s-ideas"'))
+        self.assertLess(t.index('id="s-ideas"'), t.index('id="s-resume"'))
+        self.assertIn('<section id="s-ideas" aria-labelledby="h-ideas">', t)
+        self.assertIn('<h2 id="h-ideas">Trades potentiels</h2>', t)
+        self.assertIn('<div id="ideas"></div>', t)
+        main = re.search(r"<main>(.*)</main>", t, re.S).group(1)
+        self.assertIn('id="s-ideas"', main)
+        self.assertIn(IDEAS_NOTE, t)
+        self.assertIn('section(renderIdeas, b, "ideas");', t)
 
     def test_template_shows_na_for_missing_values(self):
         self.assertIn("n/a", self.t)
@@ -352,6 +400,69 @@ class TestCharte4884(unittest.TestCase):
         self.assertEqual(body.get("padding-right"), "max(16px, env(safe-area-inset-right, 0px))")
         self.assertEqual(css_block(self.t, ".scroll").get("overflow-x"), "auto")
 
+    def test_the_seven_headings_include_trades_potentiels(self):
+        self.assertIn('<h2 id="h-ideas">Trades potentiels</h2>', self.t)
+        self.assertEqual(len(re.findall(r"<h2[ >]", self.t)), 7)
+
+    def test_idea_cards_follow_the_charter(self):
+        # a card is a .panel (1px border, 16px radius, no shadow, no side accent)
+        self.assertIn('["article", "panel idea"]', self.t)
+        panel = css_block(self.t, ".panel")
+        self.assertEqual(panel.get("border-radius"), "16px")
+        self.assertIn("1px solid var(--line)", panel.get("border", ""))
+        idea = css_block(self.t, ".idea")
+        self.assertEqual(idea.get("overflow-wrap"), "anywhere")
+        self.assertEqual(idea.get("min-width"), "0")
+        self.assertEqual(idea.get("font-variant-numeric"), "tabular-nums")
+        # one column at 400px: the grid never asks for more than the available width
+        grid = css_block(self.t, ".ideas")
+        self.assertEqual(grid.get("display"), "grid")
+        self.assertEqual(grid.get("grid-template-columns"),
+                         "repeat(auto-fit, minmax(min(100%, 16rem), 1fr))")
+        for sel in (".idea-head", ".facts", ".nums", ".why", ".skipped", ".callout", ".total"):
+            self.assertIsNotNone(css_block(self.t, sel), sel)
+        self.assertNotIn("box-shadow", self.t)
+        self.assertIsNone(re.search(r"border-(left|right|inline-start|inline-end)\s*:", self.t))
+        # the side is a word, the dot only reinforces it
+        self.assertEqual(css_block(self.t, ".pill.up::before").get("background"), "var(--pos)")
+        self.assertEqual(css_block(self.t, ".pill.down::before").get("background"),
+                         "var(--neg-edge)")
+        for word in ("Haussier", "Baissier"):
+            self.assertIn('"%s"' % word, self.t)
+
+    def test_new_text_pairs_are_token_pairs_and_reach_4_5_to_1(self):
+        """Each new text style names its colour and its ground as tokens, and the pair
+        reaches 4.5:1 in both themes (the tokens are defined in both blocks)."""
+        t = self.t
+        light = css_block(t, LIGHT_BLOCK)
+        dark = dict(light)
+        dark.update(css_block(t, DARK_ATTR_BLOCK))
+        pairs = (  # (selector, colour token, ground token): the ground is the card or page
+            (".idea-title", "--ink", "--surface"),
+            (".idea-head .rank", "--muted", "--surface"),
+            (".idea-head .name", "--muted", "--surface"),
+            (".why", "--ink", "--surface"),
+            (".size-msg", "--ink", "--surface"),
+            (".callout", "--warn-ink", "--warn-bg"),
+            (".total", "--ink", "--bg"),
+            (".skipped", "--ink", "--bg"),
+        )
+        for selector, fg, bg in pairs:
+            rule = css_block(t, selector)
+            self.assertIsNotNone(rule, selector)
+            self.assertEqual(rule.get("color"), "var(%s)" % fg, selector)
+            for name, tok in (("light", light), ("dark", dark)):
+                self.assertGreaterEqual(contrast(tok[fg], tok[bg]), 4.5,
+                                        "%s %s on %s (%s)" % (selector, fg, bg, name))
+        self.assertEqual(css_block(t, ".callout").get("background"), "var(--warn-bg)")
+        self.assertIn("var(--warn-line)", css_block(t, ".callout").get("border", ""))
+        self.assertEqual(css_block(t, ".panel").get("background"), "var(--surface)")
+        # the two dots are graphics: 3:1 against the card
+        for fg in ("--pos", "--neg-edge"):
+            for name, tok in (("light", light), ("dark", dark)):
+                self.assertGreaterEqual(contrast(tok[fg], tok["--surface"]), 3.0,
+                                        "%s (%s)" % (fg, name))
+
 
 class TestContrast(unittest.TestCase):
     """Every text/background pair shipped reaches 4.5:1 (3:1 for the graphic bars) in the
@@ -397,7 +508,9 @@ STUB = r"""
 const fs = require('fs');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const json = (html.match(/<script type="application\/json" id="briefing">([\s\S]*?)<\/script>/) || [])[1];
-const code = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1];
+// the code is the LAST <script>: hostile text in the JSON block may itself contain "<script>"
+const ci = html.lastIndexOf('<script>');
+const code = html.slice(ci + 8, html.indexOf('</script>', ci));
 function El(tag) {
   this.tag = tag; this.children = []; this.attrs = {}; this.style = {}; this._text = '';
   this.className = '';
@@ -412,13 +525,14 @@ Object.defineProperty(El.prototype, 'textContent', {
   get() { return this._text + this.children.map(c => c instanceof El ? c.textContent : String(c)).join(' '); },
   set(v) { this._text = String(v); this.children = []; } });
 const byId = {};
+const created = [];
 const document = {
   getElementById(id) {
     if (id === 'briefing') return { textContent: process.argv[3] ? fs.readFileSync(process.argv[3], 'utf8') : json };
     return byId[id] || (byId[id] = new El('div'));
   },
-  createElement(t) { return new El(t); },
-  createElementNS(ns, t) { return new El(t); },
+  createElement(t) { created.push(t); return new El(t); },
+  createElementNS(ns, t) { created.push(t); return new El(t); },
   createTextNode(s) { return String(s); },
   querySelector() { return new El('div'); },
   querySelectorAll() { return []; },
@@ -428,6 +542,7 @@ const document = {
 const win = { matchMedia: () => ({ matches: false, addEventListener() {} }) };
 new Function('document', 'window', code)(document, win);
 process.stdout.write(Object.values(byId).map(e => e.textContent).join('\n'));
+if (process.env.TAGS_FILE) { fs.writeFileSync(process.env.TAGS_FILE, JSON.stringify(created)); }
 """
 
 
@@ -436,7 +551,8 @@ class TestInlineScriptRuns(unittest.TestCase):
     """Runs the inline script in node with a minimal DOM stub: it must not throw on
     the sample, on a minimal briefing and on empty parts."""
 
-    def run_node(self, briefing_obj=None):
+    def run_node(self, briefing_obj=None, tags=False):
+        """Stdout of the render; with tags=True, (stdout, tags of every element created)."""
         with tempfile.TemporaryDirectory() as d:
             stub = os.path.join(d, "stub.js")
             with open(stub, "w", encoding="utf-8") as f:
@@ -446,9 +562,13 @@ class TestInlineScriptRuns(unittest.TestCase):
             hp = os.path.join(d, "p.html")
             with open(hp, "w", encoding="utf-8") as f:
                 f.write(html)
+            tags_path = os.path.join(d, "tags.json")
+            env = dict(os.environ, TAGS_FILE=tags_path)
             r = subprocess.run(["node", stub, hp], capture_output=True, text=True,
-                               encoding="utf-8")
+                               encoding="utf-8", env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
+            if tags:
+                return r.stdout, json.loads(read(tags_path))
             return r.stdout
 
     def test_script_renders_sample(self):
@@ -506,6 +626,271 @@ class TestInlineScriptRuns(unittest.TestCase):
     def test_script_survives_minimal_object(self):
         out = self.run_node({"disclaimer": DISCLAIMER})
         self.assertNotIn("undefined", out)
+
+    # ---- « Trades potentiels »
+
+    @staticmethod
+    def idea(b, symbol):
+        return next(i for i in b["trade_ideas"]["ideas"] if i["symbol"] == symbol)
+
+    @staticmethod
+    def px(symbol, v):
+        """The plan's decimals: forex 5 (3 on a JPY quote), anything else 2."""
+        forex = re.match(r"^[A-Z]{6}=X$", symbol) is not None
+        return "%.*f" % ((3 if symbol[3:6] == "JPY" else 5) if forex else 2, v)
+
+    def test_ideas_heading_and_note(self):
+        out = self.run_node()
+        self.assertIn(IDEAS_NOTE, out)
+        # the note is part of the section: once, before the first card
+        self.assertEqual(out.count(IDEAS_NOTE), 1)
+
+    def test_sample_has_the_three_idea_cases(self):
+        b = sample()
+        ti = b["trade_ideas"]
+        self.assertEqual(sorted(i["size"]["status"] for i in ti["ideas"]),
+                         ["ok", "to_confirm", "too_wide"])
+        self.assertEqual(self.idea(b, "EURUSD=X")["size"]["status"], "ok")
+        self.assertEqual({i["side"] for i in ti["ideas"]}, {"haussier", "baissier"})
+        self.assertEqual(len(ti["skipped"]), 1)
+        self.assertFalse(ti["over_cap"])
+        self.assertTrue(any(not h["setups"] and h["setups_short"]
+                            for h in b["swing"]["hits"]))   # a short-only hit
+
+    def test_idea_card_shows_the_four_numbers_and_why(self):
+        b = sample()
+        eur = self.idea(b, "EURUSD=X")
+        eur["size"].update(lots=1.0, units=100000, risk_usd=487.0, leverage=1.19,
+                           pip_value_usd_per_lot=10.0)
+        eur["rr"] = 2.0
+        out, tags = self.run_node(b, tags=True)
+        self.assertEqual(tags.count("article"), 3)       # one card per idea
+        for text in ("N° %d" % eur["rank"], "EURUSD=X", "EUR/USD", "Haussier",
+                     "Entrée", "Stop", "Cible", "Taille",
+                     self.px("EURUSD=X", eur["reference_price"]),
+                     self.px("EURUSD=X", eur["stop"]), self.px("EURUSD=X", eur["target"]),
+                     "1.00 lot (100 000 unités)",
+                     "Risque maximal (USD)", "487.00", "1:2", "×1.19",
+                     "Valeur du pip par lot", "10.00 USD"):
+            self.assertIn(text, out)
+        for line in eur["why"]:
+            self.assertIn(line, out)
+        # the rule tags use the same label dictionary as the swing table
+        self.assertIn("Cassure du plus haut 20 j", out)
+        self.assertIn("Surachat", out)
+        # a bearish idea says so with the word
+        self.assertIn("Baissier", out)
+        self.assertEqual(out.count("Haussier"), 2)
+        self.assertEqual(out.count("Baissier"), 1)
+
+    def test_idea_card_for_a_contract_instrument_has_a_size_and_no_pip_value(self):
+        b = sample()
+        b["trade_ideas"]["ideas"] = [{
+            "rank": 1, "symbol": "GC=F", "name": "Or", "side": "haussier", "score": 3,
+            "setups": ["bull_flag"], "trend": "up", "reference_price": 4012.5,
+            "stop": 3950.25, "target": 4136.75, "rr": 2.5, "atr": 41.5,
+            "size": {"status": "ok", "lots": None, "units": None, "size": 0.08,
+                     "risk_usd": 498.0, "leverage": 0.321, "pip_value_usd_per_lot": None,
+                     "limited_by": "risque", "note": None},
+            "why": ["+2 drapeau haussier"]}]
+        b["trade_ideas"]["skipped"] = []
+        out = self.run_node(b)
+        for text in ("GC=F", "taille 0.08", "498.00", "1:2.5", "×0.321",
+                     "4012.50", "3950.25", "4136.75", "Drapeau haussier"):
+            self.assertIn(text, out)
+        self.assertNotIn("Valeur du pip par lot", out)
+        self.assertNotIn("unités", out)
+        self.assertNotIn("lot (", out)
+
+    def test_plan_prices_keep_the_decimals_of_the_plan(self):
+        b = sample()
+        b["trade_ideas"]["skipped"] = []
+        b["trade_ideas"]["ideas"] = [{
+            "rank": 1, "symbol": "USDJPY=X", "name": "USD/JPY", "side": "baissier",
+            "score": 2, "setups": ["lose_ma20"], "trend": None,
+            "reference_price": 151.84, "stop": 152.607, "target": 150.306, "rr": 2.0,
+            "atr": 0.51,
+            "size": {"status": "ok", "lots": 0.5, "units": 50000, "size": None,
+                     "risk_usd": 255.0, "leverage": 0.5, "pip_value_usd_per_lot": 6.5867,
+                     "limited_by": "risque", "note": None},
+            "why": []}]
+        out = self.run_node(b)
+        for text in ("151.840", "152.607", "150.306", "0.50 lot (50 000 unités)",
+                     "6.59 USD", "Perte de la moyenne 20 j", "Baissier"):
+            self.assertIn(text, out)
+        self.assertNotIn("Pourquoi", out)         # no why lines, no empty list
+        # other instruments: 2 decimals, never 3
+        b["trade_ideas"]["ideas"][0].update(symbol="CL=F", reference_price=74.256,
+                                            stop=74.89, target=73.0)
+        out = self.run_node(b)
+        for text in ("74.26", "74.89", "73.00"):
+            self.assertIn(text, out)
+        self.assertNotIn("73.000", out)
+
+    def test_idea_with_a_leverage_limit_says_so(self):
+        b = sample()
+        eur = self.idea(b, "EURUSD=X")
+        eur["size"]["limited_by"] = "levier"
+        self.assertIn("Taille limitée par le levier maximal", self.run_node(b))
+        eur["size"]["limited_by"] = "risque"
+        self.assertNotIn("Taille limitée par le levier maximal", self.run_node(b))
+
+    def test_to_confirm_and_too_wide_messages(self):
+        b = sample()
+        out, tags = self.run_node(b, tags=True)
+        confirm = self.idea(b, "^FCHI")["size"]
+        wide = self.idea(b, "CL=F")["size"]
+        self.assertEqual((confirm["status"], wide["status"]), ("to_confirm", "too_wide"))
+        self.assertIn("Taille à confirmer chez le courtier", out)
+        self.assertIn(confirm["note"], out)
+        self.assertIn("renseigner contracts", out)
+        self.assertIn("Risque prévu : 500.00 USD", out)
+        self.assertIn("Stop trop large pour le risque fixé", out)
+        # the planned risk belongs to the to_confirm idea only, so the displayed figures
+        # add up to the cumulated total
+        self.assertEqual(out.count("Risque prévu"), 1)
+        shown = [float(m) for m in re.findall(r"Risque maximal \(USD\)\s+(\d+\.\d\d)", out)]
+        planned = [float(m) for m in re.findall(r"Risque prévu : (\d+\.\d\d) USD", out)]
+        self.assertAlmostEqual(sum(shown) + sum(planned),
+                               b["trade_ideas"]["total_risk_usd"], places=2)
+        # no size, no lots for either
+        self.assertEqual(out.count("Risque maximal (USD)"), 1)   # the ok idea only
+
+    def test_total_risk_line_and_over_cap_banner(self):
+        b = sample()
+        out = self.run_node(b)
+        self.assertIn("Risque cumulé : 997.51 USD (1.00 %) sur 2 % autorisés", out)
+        self.assertNotIn(OVER_CAP_BANNER, out)
+        self.assertNotIn("au-dessus du plafond", out)
+        ti = b["trade_ideas"]
+        ti.update(over_cap=True, total_risk_usd=2500.0, total_risk_pct=2.5)
+        out = self.run_node(b)
+        self.assertIn("Risque cumulé : 2500.00 USD (2.50 %) sur 2 % autorisés", out)
+        self.assertEqual(out.count(OVER_CAP_BANNER), 1)
+        # only a real true counts: the text "false" does not raise the banner
+        ti["over_cap"] = "false"
+        self.assertNotIn(OVER_CAP_BANNER, self.run_node(b))
+        ti["over_cap"] = False
+        self.assertNotIn(OVER_CAP_BANNER, self.run_node(b))
+
+    def test_skipped_ideas_listed_with_reason(self):
+        b = sample()
+        out = self.run_node(b)
+        self.assertIn("Idées écartées", out)
+        self.assertIn("GBPUSD=X", out)
+        self.assertIn("corrélée à EURUSD=X", out)
+        b["trade_ideas"]["skipped"] = [{"symbol": "AUDUSD=X", "reason": "ATR indisponible"},
+                                       {"symbol": "USDJPY=X",
+                                        "reason": "signaux contradictoires"}]
+        out = self.run_node(b)
+        for text in ("AUDUSD=X", "ATR indisponible", "USDJPY=X", "signaux contradictoires"):
+            self.assertIn(text, out)
+        self.assertNotIn("corrélée à EURUSD=X", out)
+        b["trade_ideas"]["skipped"] = []
+        self.assertNotIn("Idées écartées", self.run_node(b))
+
+    def test_zero_ideas_message(self):
+        b = sample()
+        b["trade_ideas"]["ideas"] = []
+        b["trade_ideas"]["skipped"] = []
+        b["trade_ideas"].update(total_risk_usd=0.0, total_risk_pct=0.0, over_cap=False)
+        out, tags = self.run_node(b, tags=True)
+        self.assertIn("Aucune idée de trade sur cette analyse.", out)
+        self.assertNotIn("article", tags)
+        self.assertNotIn("Risque cumulé", out)
+        self.assertIn(IDEAS_NOTE, out)
+        self.assertNotIn("Section indisponible", out)
+
+    def test_old_briefing_without_trade_ideas_does_not_break(self):
+        b = sample()
+        del b["trade_ideas"]
+        out = self.run_node(b)
+        self.assertIn("Aucune idée de trade sur cette analyse.", out)
+        self.assertNotIn("Section indisponible", out)
+        self.assertIn("EURUSD=X", out)            # the rest of the page is intact
+        for bad in ("undefined", "NaN", "null"):
+            self.assertNotIn(bad, out)
+        for junk in (None, [], "x", 3, {"ideas": "x"}, {"ideas": None, "skipped": 5},
+                     {"ideas": [None, 3, "x", {}], "skipped": [None, {}]}):
+            b["trade_ideas"] = junk
+            out = self.run_node(b)
+            self.assertIn("EURUSD=X", out)
+            for bad in ("undefined", "NaN", "null"):
+                self.assertNotIn(bad, out, repr(junk))
+
+    def test_idea_with_missing_fields_shows_na(self):
+        b = sample()
+        b["trade_ideas"]["ideas"] = [{"rank": 1, "symbol": "EURUSD=X", "side": "haussier"}]
+        b["trade_ideas"]["skipped"] = []
+        out = self.run_node(b)
+        self.assertIn("n/a", out)
+        self.assertIn("Haussier", out)
+        self.assertNotIn("Section indisponible", out)
+        for bad in ("undefined", "NaN", "null"):
+            self.assertNotIn(bad, out)
+
+    def test_hostile_text_in_idea_fields_is_not_executed(self):
+        evil_img = "<img src=x onerror=alert(1)>"
+        evil_script = "</script><script>alert(2)</script><!-- x"
+        b = sample()
+        eur = self.idea(b, "EURUSD=X")
+        eur["symbol"] = evil_img
+        eur["name"] = evil_script
+        eur["why"] = [evil_img, evil_script]
+        eur["setups"] = [evil_img]
+        b["trade_ideas"]["ideas"][-1]["size"]["note"] = evil_img + evil_script
+        b["trade_ideas"]["skipped"] = [{"symbol": evil_script, "reason": evil_img}]
+        html = page.render_page(b, TEMPLATE)
+        self.assertEqual(html.count("</script>"), 2)        # the JSON block and the code
+        self.assertNotIn("</", embedded(html))
+        self.assertNotIn("<!--", embedded(html))
+        out, tags = self.run_node(b, tags=True)
+        for tag in ("img", "script", "b", "iframe", "svg"):
+            self.assertNotIn(tag, tags)
+        self.assertIn("article", tags)    # the recorder does see the elements that are made
+        # the hostile strings are shown as text, never interpreted
+        self.assertIn(evil_img, out)
+        self.assertIn(evil_script, out)
+
+    def test_new_setup_labels_in_swing_table(self):
+        b = sample()
+        b["trade_ideas"]["ideas"] = []          # isolate the swing table from the idea cards
+        b["trade_ideas"]["skipped"] = []
+        hit = b["swing"]["hits"][0]
+        hit["setups"] = ["breakout_20d"]
+        hit["setups_short"] = [code for code, _ in NEW_LABELS]
+        out = self.run_node(b)
+        for code, label in NEW_LABELS + OLD_LABELS[:1]:
+            self.assertIn(label, out, code)
+        self.assertNotIn("breakdown_20d", out)      # a known code never shows raw
+        # existing labels are unchanged
+        hit["setups"] = [code for code, _ in OLD_LABELS]
+        hit["setups_short"] = []
+        out = self.run_node(b)
+        for code, label in OLD_LABELS:
+            self.assertIn(label, out, code)
+        # an unknown code is shown as is (as before)
+        hit["setups"] = ["mystery_rule"]
+        self.assertIn("mystery_rule", self.run_node(b))
+
+    def test_short_only_hit_of_the_sample_shows_its_labels(self):
+        b = sample()
+        b["trade_ideas"]["ideas"] = []
+        b["trade_ideas"]["skipped"] = []
+        short_only = [h for h in b["swing"]["hits"] if not h["setups"]]
+        self.assertTrue(short_only)
+        out = self.run_node(b)
+        self.assertIn(short_only[0]["symbol"], out)
+        self.assertIn("Rejet depuis le surachat", out)
+
+    def test_rendered_sample_has_no_forbidden_words(self):
+        out = self.run_node()
+        self.assertIsNone(re.search(FORBIDDEN_WORDS, out))
+        self.assertIsNotNone(re.search(FORBIDDEN_WORDS, out + " un achat"))
+        # no gain figure: a card carries a risk, never a potential gain
+        gain = r"(?i)\b(gains?|gagner|profits?)\b"
+        self.assertIsNone(re.search(gain, out))
+        self.assertIsNotNone(re.search(gain, out + " un gain de"))
 
 
 def run_main(argv):
@@ -566,6 +951,50 @@ class TestSampleFixture(unittest.TestCase):
         self.assertGreaterEqual(len(b["day_plan"]["levels"]), 1)
         self.assertGreaterEqual(len(b["warnings"]), 2)
         self.assertEqual(b["disclaimer"], DISCLAIMER)
+
+    def test_sample_fixture_has_the_real_key_set(self):
+        """The fixture is compared with a fresh build_briefing, so it cannot drift again."""
+        fresh = briefing.build_briefing(tb.UNIVERSE, tb.all_breakouts(), [], {}, tb.cal(),
+                                        tb.TUE)
+        b = sample()
+        self.assertEqual(set(b), set(fresh))
+        self.assertEqual(list(b), list(fresh))
+        for key in ("as_of", "counts", "calendar", "strength", "swing", "day_plan",
+                    "trade_ideas"):
+            self.assertEqual(set(b[key]), set(fresh[key]), key)
+        self.assertEqual(set(b["trade_ideas"]["account"]), set(fresh["trade_ideas"]["account"]))
+        idea, real = b["trade_ideas"]["ideas"][0], fresh["trade_ideas"]["ideas"][0]
+        self.assertEqual(set(idea), set(real))
+        for i in b["trade_ideas"]["ideas"]:
+            self.assertEqual(set(i["size"]), set(real["size"]))
+            self.assertEqual(set(i), set(real))
+        self.assertEqual(set(b["swing"]["hits"][0]), set(fresh["swing"]["hits"][0]))
+        self.assertEqual(set(b["day_plan"]["levels"][0]), set(fresh["day_plan"]["levels"][0]))
+        self.assertIn("last_bar_date", b["counts"])
+        self.assertIn("reason", b["calendar"])
+        self.assertIn("setups_short", b["swing"]["hits"][0])
+        # the key-set check bites
+        broken = dict(b)
+        del broken["trade_ideas"]
+        self.assertNotEqual(set(broken), set(fresh))
+
+    def test_sample_fixture_is_what_the_generator_produces(self):
+        with open(os.path.join(FIX, "briefing_sample.json"), encoding="utf-8") as f:
+            committed = json.load(f)
+        self.assertEqual(committed, json.loads(json.dumps(make_sample_fixture.build_sample())))
+
+    def test_sample_fixture_covers_the_idea_cases(self):
+        b = sample()
+        ti = b["trade_ideas"]
+        self.assertEqual(len(ti["ideas"]), 3)
+        self.assertEqual(sorted(i["size"]["status"] for i in ti["ideas"]),
+                         ["ok", "to_confirm", "too_wide"])
+        ok = next(i for i in ti["ideas"] if i["size"]["status"] == "ok")
+        self.assertIsNotNone(ok["size"]["lots"])            # an ok forex idea
+        self.assertEqual(len(ti["skipped"]), 1)
+        self.assertFalse(ti["over_cap"])
+        self.assertTrue(any(not h["setups"] and h["setups_short"]
+                            for h in b["swing"]["hits"]))   # a short-only hit
 
 
 if __name__ == "__main__":

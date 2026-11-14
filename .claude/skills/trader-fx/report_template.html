@@ -161,6 +161,27 @@
   .tag { display: inline-block; border: 1px solid var(--color-gold); color: var(--tag-ink); border-radius: 50px; padding: 1px 10px; font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; line-height: 1.5; white-space: nowrap; }
   .empty { padding: 12px; color: var(--muted); font-size: 0.9375rem; }
 
+  /* Trades potentiels: one card per idea (a .panel), one column at phone width. The side is
+     a word (Haussier / Baissier); the dot of its pill only repeats it, in a token that
+     reaches 3:1 on the card in both themes. */
+  .ideas { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 16px; }
+  .idea { min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .idea-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .idea-head .rank { font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .idea-head .name { font-size: 0.875rem; color: var(--muted); }
+  .idea-title { font-size: 1.0625rem; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--ink); }
+  .pill.up::before { background: var(--pos); }
+  .pill.down::before { background: var(--neg-edge); }
+  .nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.5rem), 1fr)); gap: 12px 16px; margin: 0; }
+  .nums .stat.wide { grid-column: 1 / -1; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr)); gap: 10px 16px; margin: 0; }
+  .facts .stat dd { font-size: 0.9375rem; font-weight: 500; }
+  .size-msg { color: var(--ink); font-weight: 600; font-size: 0.9375rem; overflow-wrap: anywhere; }
+  .why { margin: 0; padding: 0 0 0 1.1rem; font-size: 0.875rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+  .skipped { margin: 0; padding: 0 0 0 1.1rem; font-size: 0.875rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+  .callout { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; line-height: 1.55; font-weight: 600; overflow-wrap: anywhere; }
+  .total { color: var(--ink); font-weight: 600; font-size: 0.9375rem; overflow-wrap: anywhere; }
+
   ul.warnings { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
   ul.warnings li { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; line-height: 1.55; overflow-wrap: anywhere; }
   footer { border-top: 1px solid var(--line); padding-top: 16px; font-size: 0.875rem; color: var(--muted); }
@@ -177,6 +198,11 @@
     <div class="asof" id="asof"></div>
     <div class="banners" id="banners"></div>
   </header>
+
+  <section id="s-ideas" aria-labelledby="h-ideas">
+    <h2 id="h-ideas">Trades potentiels</h2>
+    <div id="ideas"></div>
+  </section>
 
   <section id="s-resume" aria-labelledby="h-resume">
     <h2 id="h-resume">Résumé</h2>
@@ -224,8 +250,18 @@
     bull_flag: "Drapeau haussier",
     reclaim_ma20: "Reprise de la moyenne 20 j",
     oversold: "Survente",
-    oversold_bounce: "Rebond depuis la survente"
+    oversold_bounce: "Rebond depuis la survente",
+    breakdown_20d: "Cassure du plus bas 20 j",
+    bear_flag: "Drapeau baissier",
+    lose_ma20: "Perte de la moyenne 20 j",
+    overbought: "Surachat",
+    overbought_reject: "Rejet depuis le surachat"
   };
+  var SIDE_LABELS = { haussier: "Haussier", baissier: "Baissier" };
+  var IDEAS_NOTE = "Idées de plan mécaniques, issues des règles ci-dessous. À valider, pas des conseils. Prix de référence : dernière clôture.";
+  var MSG_TO_CONFIRM = "Taille à confirmer chez le courtier";
+  var MSG_TOO_WIDE = "Stop trop large pour le risque fixé";
+  var MSG_OVER_CAP = "Risque cumulé au-dessus du plafond : n'ouvrez pas toutes ces idées en même temps.";
   var TREND_LABELS = { up: "haussière", down: "baissière", mixed: "mixte" };
   var FAMILIES = [["forex", "Forex"], ["commodities", "Matières premières"], ["indices", "Indices"]];
   var STALE_HOURS = 12;
@@ -475,10 +511,123 @@
         { label: "RSI", cell: function (x) { return fixed(x.rsi, 0); }, cls: "num r" },
         { label: "ATR %", cell: function (x) { return fixed(x.atr_pct, 2); }, cls: "num r" },
         { label: "Tendance", cell: function (x) { return TREND_LABELS[x.trend] || "n/a"; } },
-        { label: "Règles", cell: function (x) { return setupTags(x.setups); }, cls: "wrap" },
+        { label: "Règles", cell: function (x) { return setupTags(list(x.setups).concat(list(x.setups_short))); }, cls: "wrap" },
         { label: "Dernière barre", cell: function (x) { return text(x.last_bar_date); }, cls: "num" }
       ], rows)));
     });
+    box.replaceChildren.apply(box, out);
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.gap = "12px";
+  }
+
+  /* --------------------------------------------------------- trades potentiels */
+
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function trimmed(v, d) { return String(Number(v.toFixed(d))); }
+  function spaced(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " "); }
+
+  // the decimals of the plan itself: forex to a tenth of a pip (3 decimals on a JPY quote,
+  // else 5), every other instrument to 2
+  function planPrice(symbol, v) {
+    if (!isNum(v)) { return "n/a"; }
+    var s = String(symbol || "");
+    return v.toFixed(family(s) !== "forex" ? 2 : s.slice(3, 6) === "JPY" ? 3 : 5);
+  }
+
+  function sizeValue(size) {
+    if (size.status !== "ok") { return "n/a"; }
+    if (isNum(size.lots) && isNum(size.units)) {
+      return fixed(size.lots, 2) + " lot (" + spaced(size.units) + " unités)";
+    }
+    if (isNum(size.size)) { return "taille " + trimmed(size.size, 6); }
+    return "n/a";
+  }
+
+  function ideaCard(idea, account) {
+    var size = obj(idea.size);
+    var side = idea.side === "haussier" ? " up" : idea.side === "baissier" ? " down" : "";
+    var taille = stat("Taille", sizeValue(size));
+    taille.className = "stat wide";
+    var out = [
+      h("div", "idea-head",
+        h("span", "rank", "N° " + text(idea.rank)),
+        h("h3", "idea-title", text(idea.symbol)),
+        has(idea.name) ? h("span", "name", String(idea.name)) : null,
+        h("span", "pill" + side, SIDE_LABELS[idea.side] || "n/a"))
+    ];
+    if (list(idea.setups).length) { out.push(setupTags(idea.setups)); }
+    out.push(h("dl", "nums",
+      stat("Entrée", planPrice(idea.symbol, idea.reference_price)),
+      stat("Stop", planPrice(idea.symbol, idea.stop)),
+      stat("Cible", planPrice(idea.symbol, idea.target)),
+      taille));
+
+    var facts = [];
+    if (size.status === "ok") {
+      facts.push(stat("Risque maximal (USD)", fixed(size.risk_usd, 2)));
+    }
+    facts.push(stat("Rapport", isNum(idea.rr) ? "1:" + trimmed(idea.rr, 2) : "n/a"));
+    if (size.status === "ok") {
+      facts.push(stat("Levier", isNum(size.leverage) ? "×" + trimmed(size.leverage, 3) : "n/a"));
+      if (isNum(size.pip_value_usd_per_lot)) {
+        facts.push(stat("Valeur du pip par lot", fixed(size.pip_value_usd_per_lot, 2) + " USD"));
+      }
+    }
+    out.push(h.apply(null, ["dl", "facts"].concat(facts)));
+
+    if (size.status === "to_confirm") {
+      out.push(h("p", "size-msg", MSG_TO_CONFIRM));
+      if (has(size.note)) { out.push(h("p", "note", String(size.note))); }
+      if (isNum(account.risk_per_trade_usd)) {
+        out.push(h("p", "note", "Risque prévu : " + fixed(account.risk_per_trade_usd, 2) + " USD"));
+      }
+    } else if (size.status === "too_wide") {
+      out.push(h("p", "size-msg", MSG_TOO_WIDE));
+      if (has(size.note) && String(size.note).toLowerCase() !== MSG_TOO_WIDE.toLowerCase()) {
+        out.push(h("p", "note", String(size.note)));
+      }
+    } else if (size.status === "ok" && size.limited_by === "levier") {
+      out.push(h("p", "note", "Taille limitée par le levier maximal."));
+    }
+
+    var why = list(idea.why);
+    if (why.length) {
+      var ul = h("ul", "why");
+      why.forEach(function (w) { ul.append(h("li", "", text(w))); });
+      out.push(h("div", "sub", h("h3", "", "Pourquoi"), ul));
+    }
+    return h.apply(null, ["article", "panel idea"].concat(out));
+  }
+
+  function renderIdeas(b) {
+    var ti = obj(b.trade_ideas);
+    var account = obj(ti.account);
+    var ideas = list(ti.ideas).filter(function (i) { return i && typeof i === "object"; });
+    var out = [h("p", "note", IDEAS_NOTE)];
+
+    if (!ideas.length) {
+      out.push(empty("Aucune idée de trade sur cette analyse."));
+    } else {
+      if (isNum(ti.total_risk_usd) && isNum(ti.total_risk_pct)) {
+        out.push(h("p", "total", "Risque cumulé : " + fixed(ti.total_risk_usd, 2) + " USD (" +
+          fixed(ti.total_risk_pct, 2) + " %)" +
+          (isNum(ti.max_total_pct) ? " sur " + trimmed(ti.max_total_pct, 2) + " % autorisés" : "")));
+      }
+      if (ti.over_cap === true) { out.push(h("p", "callout", MSG_OVER_CAP)); }
+      var grid = h("div", "ideas");
+      ideas.forEach(function (idea) { grid.append(ideaCard(idea, account)); });
+      out.push(grid);
+    }
+
+    var skipped = list(ti.skipped).filter(function (s) { return s && typeof s === "object"; });
+    if (skipped.length) {
+      var ul = h("ul", "skipped");
+      skipped.forEach(function (s) { ul.append(h("li", "", text(s.symbol) + " : " + text(s.reason))); });
+      out.push(h("div", "sub", h("h3", "", "Idées écartées"), ul));
+    }
+
+    var box = $("ideas");
     box.replaceChildren.apply(box, out);
     box.style.display = "flex";
     box.style.flexDirection = "column";
@@ -584,6 +733,7 @@
     return;
   }
   section(renderHeader, b, "asof");
+  section(renderIdeas, b, "ideas");
   section(renderResume, b, "resume");
   section(renderForce, b, "force");
   section(renderCalendar, b, "calendar");
