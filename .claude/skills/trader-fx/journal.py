@@ -6,15 +6,21 @@ journal exactly as it was: every check runs before the first change. Messages of
 are one French line, ready to print. Times are stored in UTC (ISO 8601); the callers pass aware
 datetimes.
 """
+import argparse
 import copy
 import json
 import math
 import os
 import re
 import shutil
+import sys
 import tempfile
 from datetime import datetime, timezone
 
+import config as fxconfig
+import jstats
+import plan
+import sessions
 import sizing
 import strength
 
@@ -58,15 +64,21 @@ def save_journal(path, journal):
     """Write the journal atomically: the old file is copied to `path + ".bak"`, the new content
     goes to a temporary file in the same folder and replaces the old one in one step. A failure
     leaves the old file untouched and no temporary file behind."""
+    write_json_atomic(path, journal, backup=True)
+
+
+def write_json_atomic(path, doc, backup=False):
+    """`doc` as JSON at `path`, written to a temporary file then moved over the old one;
+    with `backup` the previous file is first copied to `path + ".bak"`."""
     folder = os.path.dirname(os.path.abspath(path))
     tmp = None
     try:
         os.makedirs(folder, exist_ok=True)
-        if os.path.exists(path):
+        if backup and os.path.exists(path):
             shutil.copyfile(path, path + ".bak")
         fd, tmp = tempfile.mkstemp(prefix=".journal-", suffix=".tmp", dir=folder)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(journal, f, ensure_ascii=False, indent=2)
+            json.dump(doc, f, ensure_ascii=False, indent=2)
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
@@ -278,3 +290,323 @@ def close_trade(journal, trade_id, *, price, when_utc, reason="manuel", pnl_usd=
     trade["history"].append({"time": when, "event": "cloture",
                              "detail": "à %s (%s)" % (price, reason)})
     return trade
+
+
+# ---------------------------------------------------------------- alerts file
+
+def build_alerts(journal, now_utc):
+    """The stop and target rules of the open trades, for the alert server. Levels only: no
+    result, capital, size or risk ever goes into this file."""
+    rules = []
+    for t in journal["trades"]:
+        if t.get("status") != "open":
+            continue
+        for kind, level in (("stop", t["stop"]), ("cible", t.get("target"))):
+            if level is None:
+                continue
+            rules.append({"id": "%s-%s" % (t["id"], kind), "trade_id": t["id"],
+                          "symbol": t["symbol"], "type": kind, "side": t["side"],
+                          "level": level, "decimals": plan.price_decimals(t["symbol"], level)})
+    return {"v": 1, "updated": _iso(now_utc), "rules": rules}
+
+
+# ---------------------------------------------------------------- command line
+
+DEFAULT_JOURNAL = "trader/fx/journal.json"
+DEFAULT_CONFIG = "trader/fx/config.json"
+DEFAULT_BRIEFING = "trader/fx/briefing.json"
+DEFAULT_ALERTS = "trader/fx/alerts.json"
+
+
+class _Parser(argparse.ArgumentParser):
+    """An argument error is one line in French, like every other error of the journal."""
+
+    def error(self, message):
+        raise JournalError("Arguments invalides : %s." % " ".join(message.split()))
+
+
+def build_parser():
+    common = _Parser(add_help=False)
+    common.add_argument("--journal", default=DEFAULT_JOURNAL, help="fichier journal.json")
+    common.add_argument("--config", default=DEFAULT_CONFIG, help="fichier config.json")
+    p = _Parser(prog="journal.py", description="journal de trading de trader-fx")
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=_Parser)
+
+    o = sub.add_parser("open", parents=[common], help="ouvre un trade")
+    o.add_argument("--symbol", required=True)
+    o.add_argument("--side", required=True, choices=SIDES)
+    o.add_argument("--price", required=True, type=float, help="prix d'entrée réel")
+    o.add_argument("--lots", type=float, help="paire forex : lots de 100 000 unités")
+    o.add_argument("--size", type=float, help="autre instrument : taille de contrat")
+    o.add_argument("--stop", type=float)
+    o.add_argument("--target", type=float)
+    o.add_argument("--time", help='heure de Paris "AAAA-MM-JJ HH:MM" (défaut : maintenant)')
+    o.add_argument("--risk-usd", type=float, help="risque prévu au stop, s'il est connu")
+    o.add_argument("--quote-usd-rate", type=float,
+                   help="valeur en USD d'une unité de la devise de cotation (paire croisée)")
+    o.add_argument("--briefing", default=DEFAULT_BRIEFING, help="briefing.json des idées")
+
+    a = sub.add_parser("amend", parents=[common], help="déplace le stop ou la cible")
+    a.add_argument("id")
+    a.add_argument("--stop", type=float)
+    a.add_argument("--target", type=float)
+    a.add_argument("--time")
+
+    c = sub.add_parser("close", parents=[common], help="clôture un trade")
+    c.add_argument("id")
+    c.add_argument("--price", required=True, type=float, help="prix de sortie réel")
+    c.add_argument("--reason", default="manuel", choices=REASONS)
+    c.add_argument("--pnl", type=float, help="résultat du courtier en USD (recommandé)")
+    c.add_argument("--tags", help="étiquettes d'erreur séparées par des virgules")
+    c.add_argument("--note")
+    c.add_argument("--time")
+    c.add_argument("--quote-usd-rate", type=float)
+
+    ls = sub.add_parser("list", parents=[common], help="liste les trades")
+    ls.add_argument("--open", action="store_true", dest="only_open")
+    ls.add_argument("--closed", action="store_true", dest="only_closed")
+
+    st = sub.add_parser("stats", parents=[common], help="statistiques des trades clôturés")
+    st.add_argument("--json", action="store_true", help="l'objet stats en JSON")
+
+    al = sub.add_parser("alerts", parents=[common], help="écrit les règles de stop et de cible")
+    al.add_argument("--out", default=DEFAULT_ALERTS)
+    return p
+
+
+def _parse_time(text, default):
+    if text is None:
+        return default
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M").replace(
+            tzinfo=sessions.PARIS).astimezone(timezone.utc)
+    except ValueError:
+        raise JournalError('--time doit être au format "AAAA-MM-JJ HH:MM" (heure de Paris).')
+
+
+def _load_config(args):
+    if args.config != DEFAULT_CONFIG and not os.path.exists(args.config):
+        raise JournalError("Fichier de configuration introuvable : %s." % args.config)
+    return fxconfig.load_config(args.config)
+
+
+def _default_fetch_rate(yahoo_symbol):
+    """Latest daily close of a Yahoo symbol, or None (any failure)."""
+    try:
+        import data
+        series, _ = data.fetch_bars([yahoo_symbol], "1d", "5d", cache_dir=None, ttl_s=0,
+                                    use_cache=False)
+        s = series.get(yahoo_symbol)
+        return s.bars[-1][4] if s is not None and s.bars else None
+    except Exception:  # noqa: BLE001 - a missing rate only leaves the risk unknown
+        return None
+
+
+def _conversion_prices(symbol, quote_usd_rate, fetch_rate):
+    """The `prices` dict for risk_at / pnl_at. Only a cross pair needs a rate (the value in USD
+    of its quote currency): the given `quote_usd_rate`, else one request through `fetch_rate`;
+    when neither gives one the dict stays empty and the amount comes out unknown."""
+    pair = strength.pair_currencies(symbol)
+    if pair is None or pair[0] == "USD" or pair[1] == "USD":
+        return {}
+    quote = pair[1]
+    if quote_usd_rate is not None:
+        _need_positive(quote_usd_rate, "--quote-usd-rate")
+        return {"%sUSD=X" % quote: float(quote_usd_rate)}
+    rate = fetch_rate("USD%s=X" % quote)
+    return {"USD%s=X" % quote: float(rate)} if _positive(rate) else {}
+
+
+def _idea_from_briefing(path, symbol, side):
+    """(snapshot of the briefing idea with the same symbol and side, its name) or (None, None)."""
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None, None
+    ideas = ((doc.get("trade_ideas") or {}).get("ideas")) if isinstance(doc, dict) else None
+    for idea in ideas if isinstance(ideas, list) else []:
+        if isinstance(idea, dict) and idea.get("symbol") == symbol and idea.get("side") == side:
+            snap = {k: idea.get(k) for k in ("rank", "score", "setups", "reference_price", "stop",
+                                             "target", "rr", "last_bar_date", "decimals", "size")}
+            snap["as_of"] = (doc.get("as_of") or {}).get("iso")
+            return snap, idea.get("name")
+    return None, None
+
+
+def _level(symbol, x):
+    """A price with the decimals of its grid; "n/a" when it is missing."""
+    if not _is_number(x):
+        return "n/a"
+    return "%.*f" % (plan.price_decimals(symbol, x), x)
+
+
+def _result_text(trade):
+    res = trade["result"]
+    r = "R %+.2f" % res["r"] if res["r"] is not None else "R non calculable"
+    source = "courtier" if res["source"] == "courtier" else "estimé, hors frais"
+    return "résultat %+.2f USD (%s), %s" % (res["pnl_usd"], source, r)
+
+
+def cmd_open(args, deps):
+    when = _parse_time(args.time, deps["now"]())
+    symbol = (args.symbol or "").strip().upper()
+    doc = load_journal(args.journal)
+    cfg = _load_config(args)
+    idea, idea_name = _idea_from_briefing(args.briefing, symbol, args.side)
+    pair = strength.pair_currencies(symbol)
+    name = idea_name or ("%s/%s" % pair if pair else symbol)
+    prices = {} if args.risk_usd is not None else _conversion_prices(
+        symbol, args.quote_usd_rate, deps["fetch_rate"])
+    trade = open_trade(doc, symbol=symbol, name=name, side=args.side, price=args.price,
+                       when_utc=when, lots=args.lots, size=args.size, stop=args.stop,
+                       target=args.target, idea=idea, risk_usd=args.risk_usd, prices=prices,
+                       contracts=cfg["contracts"])
+    save_journal(args.journal, doc)
+    risk = ("risque prévu %.2f USD" % trade["risk_usd"] if trade["risk_usd"] is not None
+            else "risque prévu inconnu (donne --quote-usd-rate ou --risk-usd)")
+    target = _level(symbol, trade["target"]) if trade["target"] is not None else "aucune"
+    print("Trade ouvert : %s, %s %s à %s, stop %s, cible %s, %s (%s)."
+          % (trade["id"], symbol, args.side, _level(symbol, args.price), _level(symbol, trade["stop"]),
+             target, risk, "idée du briefing" if idea else "hors plan"))
+    return 0
+
+
+def cmd_amend(args, deps):
+    when = _parse_time(args.time, deps["now"]())
+    doc = load_journal(args.journal)
+    trade = find_trade(doc, args.id)
+    tagged = "stop_deplace" in trade["tags"]
+    amend_trade(doc, args.id, when_utc=when, stop=args.stop, target=args.target)
+    save_journal(args.journal, doc)
+    sym = trade["symbol"]
+    extra = " Étiquette stop_deplace ajoutée." if "stop_deplace" in trade["tags"] and not tagged else ""
+    target = _level(sym, trade["target"]) if trade["target"] is not None else "aucune"
+    print("Trade modifié : %s, stop %s, cible %s.%s" % (trade["id"], _level(sym, trade["stop"]),
+                                                        target, extra))
+    return 0
+
+
+def cmd_close(args, deps):
+    when = _parse_time(args.time, deps["now"]())
+    doc = load_journal(args.journal)
+    cfg = _load_config(args)
+    trade = find_trade(doc, args.id)
+    prices = {} if args.pnl is not None else _conversion_prices(
+        trade["symbol"], args.quote_usd_rate, deps["fetch_rate"])
+    tags = [x.strip() for x in (args.tags or "").split(",") if x.strip()]
+    close_trade(doc, args.id, price=args.price, when_utc=when, reason=args.reason,
+                pnl_usd=args.pnl, prices=prices, contracts=cfg["contracts"], tags=tags,
+                note=args.note or "")
+    save_journal(args.journal, doc)
+    print("Trade clôturé : %s, %s." % (trade["id"], _result_text(trade)))
+    return 0
+
+
+def cmd_list(args, deps):
+    doc = load_journal(args.journal)
+    only_open, only_closed = args.only_open, args.only_closed
+    for t in doc["trades"]:
+        if only_open != only_closed and (t["status"] == "open") != only_open:
+            continue
+        sym = t["symbol"]
+        target = _level(sym, t.get("target")) if t.get("target") is not None else "aucune"
+        line = "%s  %s  %s %s  entrée %s  stop %s  cible %s" % (
+            t["id"], "ouvert" if t["status"] == "open" else "clôturé", sym, t["side"],
+            _level(sym, (t.get("entry") or {}).get("price")), _level(sym, t.get("stop")), target)
+        if t.get("result") is not None:
+            line += "  " + _result_text(t)
+        print(line)
+    return 0
+
+
+def _fmt(x, spec="%.2f"):
+    return "n/a" if x is None else spec % x
+
+
+def _group_line(g):
+    rate = "n/a" if g["win_rate"] is None else "%.1f %%" % (g["win_rate"] * 100)
+    return "  %s : n=%d, taux positif %s, R moyen %s, R total %+.2f, résultat %+.2f USD%s" % (
+        g["key"], g["n"], rate, _fmt(g["avg_r"]), g["total_r"], g["pnl_usd"],
+        ", peu de trades" if g["few"] else "")
+
+
+def render_stats(stats):
+    lines = ["Journal : %d trades clôturés, %d ouverts" % (stats["n_closed"], stats["n_open"])]
+    if stats["sample_warning"]:
+        lines.append("Attention : %s (moins de %d trades clôturés)."
+                     % (stats["sample_warning"], jstats.MIN_TRADES))
+    if stats["n_closed"] == 0:
+        lines.append("Aucun trade clôturé pour l'instant.")
+        return "\n".join(lines)
+    o = stats["overall"]
+    lines.append("Global : n=%d, positifs %d, négatifs %d, à l'équilibre %d, taux positif %s, "
+                 "R moyen %s, R total %+.2f, résultat %+.2f USD%s" % (
+                     o["n"], o["positive"], o["negative"], o["flat"],
+                     "n/a" if o["win_rate"] is None else "%.1f %%" % (o["win_rate"] * 100),
+                     _fmt(o["expectancy_r"]), o["total_r"], o["pnl_usd"],
+                     " (dont %d estimé(s), hors frais)" % o["n_estimated"] if o["n_estimated"] else ""))
+    for title, key in (("Par règle (un trade compte dans chacune de ses règles)", "by_rule"),
+                       ("Par sens", "by_side"), ("Par paire", "by_symbol"),
+                       ("Par session d'entrée", "by_session"), ("Par jour de la semaine (Paris)", "by_weekday")):
+        lines.append(title + " :")
+        lines.extend(_group_line(g) for g in stats[key])
+    if stats["errors"]:
+        lines.append("Erreurs :")
+        lines.extend("  %s : n=%d, R moyen %s, R total %+.2f" % (e["tag"], e["n"], _fmt(e["avg_r"]),
+                                                              e["total_r"]) for e in stats["errors"])
+    q = stats["equity"]
+    lines.append("Capital : départ %.2f USD, fin %.2f USD, pire drawdown %.2f USD (%.2f %%), "
+                 "plafond de risque cumulé %s %%" % (q["start"], q["end"], q["max_drawdown_usd"],
+                                                    q["max_drawdown_pct"], q["cap_pct"]))
+    if q["worst_streak"]["n"]:
+        lines.append("Pire série négative : %d trade(s), R %+.2f" % (q["worst_streak"]["n"],
+                                                                     q["worst_streak"]["r"]))
+    return "\n".join(lines)
+
+
+def cmd_stats(args, deps):
+    doc = load_journal(args.journal)
+    cfg = _load_config(args)
+    stats = jstats.compute_stats(doc, capital=float(cfg["account"]["capital"]),
+                                 cap_pct=float(cfg["risk"]["max_total_pct"]))
+    print(json.dumps(stats, ensure_ascii=False, indent=2) if args.json else render_stats(stats))
+    return 0
+
+
+def cmd_alerts(args, deps):
+    doc = load_journal(args.journal)
+    alerts = build_alerts(doc, deps["now"]())
+    write_json_atomic(args.out, alerts)
+    trades = len({r["trade_id"] for r in alerts["rules"]})
+    print("Alertes écrites : %d règle(s) pour %d trade(s) ouvert(s) → %s."
+          % (len(alerts["rules"]), trades, args.out))
+    return 0
+
+
+def _utf8_streams():
+    """Piped output on Windows defaults to the ANSI code page: force UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
+COMMANDS = {"open": cmd_open, "amend": cmd_amend, "close": cmd_close, "list": cmd_list,
+            "stats": cmd_stats, "alerts": cmd_alerts}
+
+
+def main(argv=None, deps=None):
+    _utf8_streams()
+    deps = dict(deps or {})
+    deps.setdefault("now", lambda: datetime.now(timezone.utc))
+    deps.setdefault("fetch_rate", _default_fetch_rate)
+    try:
+        args = build_parser().parse_args(argv)
+        return COMMANDS[args.cmd](args, deps)
+    except (JournalError, fxconfig.ConfigError) as e:
+        print(str(e))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
