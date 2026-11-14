@@ -14,13 +14,19 @@ description: >-
   compte de l'utilisateur (risque fixé, lots, levier), et prépare un plan du
   jour (niveaux de la veille et de la semaine, plage de la session asiatique,
   sessions Tokyo, Londres, New York). Écrit trader/fx/briefing.json et une page
-  HTML à publier en Artifact. Use when the user says "briefing forex", "scan
+  HTML à publier en Artifact. Tient aussi un journal de trading : les trades
+  réellement pris (entrée, taille, stop, cible, clôture), leur résultat en USD
+  et en R, des statistiques honnêtes (avec leur nombre de trades), les règles
+  de stop et de cible des trades ouverts (alerts.json) et une page « Journal
+  de trading ». Use when the user says "briefing forex", "scan
   forex", "force des devises", "calendrier économique", "matières premières",
   "indices", "briefing CFD", "trades potentiels", "taille de position", "idées
-  de trade", "forex briefing", "currency strength", "economic calendar", "what
+  de trade", "journal de trading", "statistiques de trades", "j'ai pris
+  l'idée", "forex briefing", "currency strength", "economic calendar", "what
   is moving in forex", "commodities and indices scan", "trade ideas", "position
-  size", "lot size", or at the start of a forex / CFD trading day.
-argument-hint: "[brief | page] [--list FILE] [--no-cache] [--json] [--config PATH]"
+  size", "lot size", "trading journal", "trade stats", or at the start of a
+  forex / CFD trading day.
+argument-hint: "[brief | page] [--list FILE] [--no-cache] [--json] [--config PATH] ; journal.py [open | amend | close | list | stats | alerts | page]"
 ---
 
 # trader-fx
@@ -64,8 +70,16 @@ n'est reçu, ou si la configuration est invalide, aucun `briefing.json` n'est
 | `trader/fx/briefing.json` | écrit par `brief` : `as_of`, `market_state`, `counts`, `data_age`, `calendar`, `strength`, `swing`, `trade_ideas`, `day_plan`, `warnings`, `disclaimer` |
 | `trader/fx/briefing.html` | écrit par `page` : page autonome, données intégrées, aucun appel réseau |
 | `trader/fx/cache/` | cache disque des barres Yahoo : 6 h pour les barres journalières (jamais réutilisé d'un jour UTC à l'autre), 10 min pour les barres 1 h. Ignoré par git |
+| `trader/fx/journal.json` | le journal des trades pris : lu par toutes les sous-commandes de `journal.py`, écrit par `open`, `amend` et `close` (écriture atomique). Contient les résultats de l'utilisateur ; versionné par git |
+| `trader/fx/journal.json.bak` | copie de la version précédente du journal, faite avant chaque écriture de `open`, `amend` et `close`. Ignorée par git |
+| `trader/fx/alerts.json` | écrit par `journal.py alerts` : les niveaux de stop et de cible des trades ouverts, pour le futur serveur d'alertes. Versionné par git |
+| `trader/fx/journal.html` | écrit par `journal.py page` : page « Journal de trading », données intégrées, aucun appel réseau. Contient les résultats : ignorée par git, à publier en Artifact privé seulement |
 
 `briefing.json` et `briefing.html` sont des sorties du jour, ignorées par git.
+`journal.json`, lui, n'est pas une sortie du jour : c'est la mémoire des trades.
+`journal.py` lit aussi `trader/fx/briefing.json` (pour retrouver l'idée d'un
+trade) et `trader/fx/config.json` (capital, plafond de risque, table de
+contrats).
 
 ## Les données
 
@@ -256,6 +270,78 @@ ne peut pas porter cette note, car les clés inconnues sont refusées). Copier
 `config.example.json` vers `trader/fx/config.json` puis corriger les valeurs et
 le capital. Un symbole absent de la table reste `to_confirm`.
 
+## Journal de trading
+
+Le journal garde les trades que l'utilisateur a réellement pris, calcule leur
+résultat en USD et en R, produit des statistiques et écrit les règles de stop et
+de cible que le futur serveur d'alertes surveillera. Il rapporte des faits. Il ne
+passe aucun ordre et ne lit pas le compte du courtier : tout vient de ce que
+l'utilisateur dit.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/journal.py" open --symbol EURJPY=X --side baissier --price 176.70 --lots 0.45
+python3 "${CLAUDE_SKILL_DIR}/journal.py" amend ID --stop 178.90          # déplace le stop et/ou la cible
+python3 "${CLAUDE_SKILL_DIR}/journal.py" close ID --price 175.20 --pnl 380.00 --reason cible
+python3 "${CLAUDE_SKILL_DIR}/journal.py" list [--open | --closed]
+python3 "${CLAUDE_SKILL_DIR}/journal.py" stats [--json]
+python3 "${CLAUDE_SKILL_DIR}/journal.py" alerts [--out PATH]            # -> trader/fx/alerts.json
+python3 "${CLAUDE_SKILL_DIR}/journal.py" page [--out PATH]              # -> trader/fx/journal.html
+```
+
+Toutes les sous-commandes prennent `--journal PATH` (défaut `trader/fx/journal.json`)
+et `--config PATH` (défaut `trader/fx/config.json`). Une erreur tient en une
+ligne, avec le code de sortie 1, et ne modifie aucun fichier.
+
+**Déclarer un trade en une phrase.** « J'ai pris l'idée EURJPY baissier à 176,70,
+0,45 lot » donne la première commande ci-dessus. Il faut le symbole, le sens, le
+prix d'entrée réel et la taille : les demander s'il en manque un, ne jamais les
+inventer.
+- `open` cherche dans `trader/fx/briefing.json` l'idée de même symbole et de même
+  sens. Trouvée, le stop et la cible de l'idée sont repris (`--stop` et
+  `--target` les remplacent) et le trade est « idée du briefing » ; sinon le trade
+  est « hors plan » et `--stop` est obligatoire.
+- Une paire forex se saisit en lots (`--lots`, 1 lot = 100 000 unités), tout autre
+  instrument en taille de contrat (`--size`). `--time "AAAA-MM-JJ HH:MM"` (heure de
+  Paris) donne l'heure d'entrée, par défaut maintenant.
+- Le risque prévu au stop est calculé avec `sizing.risk_at`. Pour une paire croisée,
+  le cours de la devise de cotation en USD est lu chez Yahoo (dernière clôture
+  journalière) sauf si `--quote-usd-rate` (valeur en USD d'une unité de la devise de
+  cotation) ou `--risk-usd` (risque prévu connu) est donné. Risque inconnu : il est
+  dit, le R sera « non calculable ».
+- L'identifiant est `AAAA-MM-JJ-SYMBOLE-n` (date UTC, symbole sans `=X`, numéro
+  d'ordre du jour), par exemple `2026-11-16-EURJPY-1`.
+
+**Clôturer : demander le résultat du courtier.** À la clôture, demander à
+l'utilisateur le prix de sortie et le résultat en USD donné par son courtier, et le
+passer avec `--pnl` : il inclut les frais, le swap et le glissement, et le trade est
+marqué « courtier ». Sans `--pnl`, le résultat est estimé avec `sizing.pnl_at` et
+marqué « estimé, hors frais ». Pour une paire croisée clôturée un autre jour que
+l'entrée, l'estimation prendrait le cours d'aujourd'hui : donner `--quote-usd-rate`
+ou `--pnl`. `--reason` vaut `stop`, `cible` ou `manuel` ; `--tags a,b` ajoute des
+étiquettes d'erreur libres (par exemple `entree_tardive`, `hors_plan_taille`) ;
+`--note` garde une remarque. Le R est le résultat divisé par le risque prévu à
+l'ouverture.
+
+**Stop déplacé.** `amend ID --stop X` (et/ou `--target Y`) change le stop ou la
+cible en vigueur. Le stop initial et le risque prévu ne changent jamais, pour que le
+R garde son unité. Un stop éloigné du côté du gain (plus bas pour un trade
+haussier, plus haut pour un baissier) ajoute l'étiquette `stop_deplace` ; un stop
+rapproché du prix, pour protéger un gain, ne l'ajoute pas.
+
+**Statistiques.** `stats` ne compte que les trades clôturés : réussite et R (taux
+positif, R moyen des positifs et des négatifs, espérance, R total, résultat), par
+règle (un trade compte dans chacune de ses règles) et par sens, par paire, session
+d'entrée et jour de la semaine (Paris), erreurs (étiquettes), capital et drawdown
+(courbe après chaque trade, pire série de trades négatifs, comparée au plafond de
+risque cumulé de la configuration). Chaque ligne affiche son `n`. Un trade est « à
+l'équilibre » quand son |R| est sous 0,05.
+
+**Alertes et page.** `alerts` écrit une règle par stop et par cible de chaque trade
+ouvert (`id`, `trade_id`, `symbol`, `type`, `side`, `level`, `decimals`). `alerts.json`
+ne contient aucun résultat, aucun capital, aucune taille et aucun risque : seulement
+des niveaux. `page` écrit la page « Journal de trading » (Résumé, Trades ouverts,
+Statistiques, Trades clôturés) ; elle contient les résultats de l'utilisateur.
+
 ## Étapes pour Claude
 
 1. Lancer `fx.py brief` (sans option, sauf demande de l'utilisateur). Si le
@@ -292,6 +378,16 @@ le capital. Un symbole absent de la table reste `to_confirm`.
    `trader-risk` et `trader-broker` sont faits pour les actions américaines
    et ne s'appliquent PAS au forex, aux matières premières ni aux indices : le
    dire à l'utilisateur plutôt que de les enchaîner.
+6. Journal. Quand l'utilisateur dit avoir pris un trade, l'avoir déplacé ou
+   l'avoir clôturé, lancer la commande `journal.py` correspondante (voir
+   « Journal de trading »), avec les valeurs qu'il a données : prix réel, taille,
+   heure, résultat du courtier. Demander ce qui manque. À la clôture, demander le
+   résultat du courtier en USD et le passer avec `--pnl`. Redire la ligne de
+   confirmation telle quelle, sans la commenter comme un conseil. Pour `stats`,
+   dire toujours le nombre de trades derrière chaque chiffre et l'avertissement
+   d'échantillon quand il apparaît (moins de 30 trades clôturés : « échantillon
+   trop petit pour conclure »). Ne publier `journal.html` en Artifact que si
+   l'utilisateur le demande, en privé : il contient ses résultats.
 
 ## Règles
 
@@ -300,8 +396,14 @@ le capital. Un symbole absent de la table reste `to_confirm`.
 - Dire « a matché une règle », jamais « achat », « vente », « gagnant » ni
   « bon trade ». Pour une idée : « haussier » ou « baissier », jamais les mots
   achat, acheter, vente, vendre, buy, sell, gagnant, profit.
-- Aucun chiffre de gain ou de perte sur un trade, aucun profit : seulement le
-  risque maximal au stop, le rapport 1:R, les lots, le levier et la valeur du pip.
+- Dans le briefing et les trades potentiels, aucun chiffre de gain ou de perte
+  sur un trade, aucun profit : seulement le risque maximal au stop, le rapport
+  1:R, les lots, le levier et la valeur du pip.
+- Dans le journal, seuls les faits sont rapportés : « résultat positif » ou
+  « résultat négatif », montants en USD et en R. Un résultat estimé est toujours
+  dit « estimé, hors frais » ; un résultat donné par le courtier est dit
+  « courtier ». Jamais achat, acheter, vente, vendre, buy, sell, conseil ni
+  prévision ; « haussier » et « baissier » désignent le sens.
 - Les données Yahoo sont retardées : ne jamais les présenter comme du temps
   réel. Un setup est périmé dès que le prix a bougé : relancer avant d'en parler.
 - Un week-end, les valeurs sont les dernières clôtures, et la plage de la
@@ -366,6 +468,21 @@ le capital. Un symbole absent de la table reste `to_confirm`.
 - Particularité connue : une série parfaitement plate (flux gelé) a un RSI de
   100 dans le calcul partagé et reçoit donc l'état `overbought`. Ce n'est pas un
   signal de marché.
+- Journal : un résultat estimé ignore les frais, le swap et le glissement ; seul
+  le résultat du courtier (`--pnl`) les inclut.
+- Journal : un seul compte, en USD (le capital vient de `account.capital` de la
+  configuration). Pas d'import depuis le courtier : tout est saisi à la main.
+- Journal : moins de 30 trades clôturés, les statistiques ne permettent pas de
+  conclure (l'avertissement est affiché) ; une ligne de moins de 5 trades porte la
+  mention « peu de trades ».
+- Journal : si le risque prévu est inconnu à l'ouverture (cours de conversion
+  introuvable), le R du trade est « non calculable » et le trade reste hors des
+  moyennes en R.
+- Journal : l'estimation d'une paire croisée utilise un cours de conversion unique
+  (celui du jour, sauf `--quote-usd-rate`), pas celui du moment de la sortie.
+- Journal : `alerts.json` ne contient aucun résultat, mais le journal n'envoie
+  aucune alerte : le serveur qui lira `alerts.json` (GitHub Actions, Telegram) est
+  un autre sous-projet, pas encore écrit.
 - Tous les chemins sont relatifs au répertoire courant : lancer les commandes
   depuis la racine du dépôt, `C:/Users/m.poirat/TRADING`.
 - Le téléchargement à 3 tâches fait trois requêtes Yahoo simultanées : mettre
@@ -378,7 +495,8 @@ Il ne place et ne vérifie aucun ordre, ne dit jamais quoi acheter ou vendre, ne
 choisit jamais une idée pour l'utilisateur, ne présente jamais des données
 retardées comme du temps réel, ne promet jamais qu'un setup fonctionne, et ne
 donne jamais une taille inventée : une taille non calculable reste « à
-confirmer ».
+confirmer ». Le journal n'invente jamais un prix, une taille ni un résultat : ce
+que l'utilisateur ne donne pas est demandé ou reste « inconnu ».
 
 ## Sécurité
 
@@ -386,7 +504,13 @@ confirmer ».
   n'est pas une recommandation.
 - Les idées de trade sont des plans mécaniques à valider, pas des conseils.
 - Aucun ordre n'est jamais placé par ce skill. Il lit des graphiques, lit le
-  fichier de configuration facultatif et écrit deux fichiers sous `trader/fx/`.
+  fichier de configuration facultatif et écrit deux fichiers sous `trader/fx/`
+  (`briefing.json` et `briefing.html`). `journal.py` écrit en plus
+  `journal.json`, `journal.json.bak`, `alerts.json` et `journal.html`, et ne
+  touche jamais au courtier.
+- `journal.json` et `journal.html` contiennent les résultats de l'utilisateur :
+  ne pousser le dépôt que vers un dépôt privé, et ne publier la page qu'en
+  Artifact privé.
 - Les comptes CFD et forex de particuliers perdent couramment de l'argent, et
   le levier amplifie les pertes. Commencer par un compte de démonstration
   (paper trading) avant tout compte réel.
