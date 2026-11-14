@@ -2,3 +2,7 @@
 trader/fx/cache/
 __pycache__/
 *.pyc
+
+# Sorties du jour de trader-fx (generees)
+trader/fx/briefing.json
+trader/fx/briefing.html
