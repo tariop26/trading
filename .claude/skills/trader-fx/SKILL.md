@@ -324,9 +324,9 @@ l'ouverture.
 
 **Stop déplacé.** `amend ID --stop X` (et/ou `--target Y`) change le stop ou la
 cible en vigueur. Le stop initial et le risque prévu ne changent jamais, pour que le
-R garde son unité. Un stop éloigné du côté du gain (plus bas pour un trade
-haussier, plus haut pour un baissier) ajoute l'étiquette `stop_deplace` ; un stop
-rapproché du prix, pour protéger un gain, ne l'ajoute pas.
+R garde son unité. Un stop éloigné du prix, du côté de la perte (plus bas pour un
+trade haussier, plus haut pour un baissier), ajoute l'étiquette `stop_deplace` ; un
+stop rapproché du prix, pour protéger un gain, ne l'ajoute pas.
 
 **Statistiques.** `stats` ne compte que les trades clôturés : réussite et R (taux
 positif, R moyen des positifs et des négatifs, espérance, R total, résultat), par

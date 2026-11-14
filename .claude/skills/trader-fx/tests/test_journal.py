@@ -109,6 +109,22 @@ class TestIds(unittest.TestCase):
         later = datetime(2026, 11, 17, 7, 0, tzinfo=timezone.utc)
         self.assertEqual(eurjpy(j, when_utc=later)["id"], "2026-11-17-EURJPY-1")
 
+    def test_an_id_is_never_reused_after_a_trade_is_deleted_by_hand(self):
+        j = journal.empty_journal()
+        first, second = eurjpy(j), eurjpy(j)
+        del j["trades"][0]                       # the only way to remove a mistaken entry
+        third = eurjpy(j)
+        self.assertEqual((first["id"], second["id"], third["id"]),
+                         ("2026-11-16-EURJPY-1", "2026-11-16-EURJPY-2", "2026-11-16-EURJPY-3"))
+        self.assertEqual(len({t["id"] for t in j["trades"]}), len(j["trades"]))
+
+    def test_id_numbering_ignores_a_lookalike_prefix(self):
+        j = journal.empty_journal()
+        eurusd(j)
+        j["trades"].append({"id": "2026-11-16-EURUSD-1x", "status": "closed"})
+        j["trades"].append({"id": "2026-11-16-EURUSD-abc", "status": "closed"})
+        self.assertEqual(eurusd(j)["id"], "2026-11-16-EURUSD-2")
+
     def test_id_of_non_forex_symbols_is_sanitised(self):
         j = journal.empty_journal()
         t = journal.open_trade(j, symbol="GC=F", name="Or", side="haussier", price=3000.0,

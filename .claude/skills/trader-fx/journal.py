@@ -137,12 +137,14 @@ def _require_open(trade):
 
 
 def new_trade_id(journal, symbol, when_utc):
-    """`<UTC date>-<symbol without "=X">-<n>`, n counting the trades with the same prefix."""
+    """`<UTC date>-<symbol without "=X">-<n>`, n one above the highest number already used with
+    the same prefix (so an id is never reused after a trade was deleted by hand)."""
     day = when_utc.astimezone(timezone.utc).date().isoformat()
     name = re.sub(r"[^A-Za-z0-9.\-]", "_", symbol[:-2] if symbol.endswith("=X") else symbol)
     prefix = "%s-%s-" % (day, name)
-    taken = sum(1 for t in journal["trades"] if str(t.get("id", "")).startswith(prefix))
-    return "%s%d" % (prefix, taken + 1)
+    used = [int(str(t.get("id", ""))[len(prefix):]) for t in journal["trades"]
+            if re.fullmatch(re.escape(prefix) + r"\d+", str(t.get("id", "")))]
+    return "%s%d" % (prefix, max(used, default=0) + 1)
 
 
 # ---------------------------------------------------------------- operations
