@@ -1,0 +1,587 @@
+<title>Journal de trading</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Montserrat:wght@400;500;600;700;800;900&display=swap">
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Charte 4884, same tokens as the briefing page. Layout: one narrow column of sections under a
+     pine-green header band; wide tables scroll inside their own container. Gold is earned: text
+     only on the pine band and in the dark theme, a rule or a border elsewhere. */
+  :root {
+    /* brand */
+    --color-dark: #1A3330;
+    --color-dark-hover: #142926;
+    --color-mid: #2A5446;
+    --color-cream: #F5F1E8;
+    --color-card: #FAFAF5;
+    --color-gold: #C9A84C;
+    --color-gold-hover: #B08A30;
+    --color-danger: #C0392B;
+    --glow: rgba(201, 168, 76, 0.07);
+    /* theme surfaces */
+    --bg: #F5F1E8;
+    --surface: #FAFAF5;
+    --ink: #1A2B27;
+    --muted: #4A6E60;
+    --line: #DDD9CC;
+    --tag-ink: #1A3330;
+    --focus: #2A5446;
+    --pos: #2A5446;
+    --neg: #C9A84C;
+    --neg-edge: #B08A30;
+    --warn-bg: #F7EBCB;
+    --warn-ink: #5C4410;
+    --warn-line: #C9A84C;
+    /* header band: pine green in both themes, so these do not change with the theme */
+    --band-ink: #FFFFFF;
+    --band-muted: #BFC6C5;
+    --band-warn-bg: #364634;
+    --band-warn-ink: #F5E6B3;
+    --band-warn-line: #C9A84C;
+    --band-stale-bg: #C0392B;
+    --band-stale-ink: #FFFFFF;
+    --band-stale-line: #F2A99F;
+    /* type */
+    --font-head: "Montserrat", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-text: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #142926;
+      --surface: #1A3330;
+      --ink: #F5F1E8;
+      --muted: #BDC3C2;
+      --line: rgba(255, 255, 255, 0.12);
+      --tag-ink: #C9A84C;
+      --focus: #C9A84C;
+      --pos: #4A8A73;
+      --neg: #C9A84C;
+      --neg-edge: #C9A84C;
+      --warn-bg: #2D3B2B;
+      --warn-ink: #EBD9A0;
+      --warn-line: #6B5E2C;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #142926;
+    --surface: #1A3330;
+    --ink: #F5F1E8;
+    --muted: #BDC3C2;
+    --line: rgba(255, 255, 255, 0.12);
+    --tag-ink: #C9A84C;
+    --focus: #C9A84C;
+    --pos: #4A8A73;
+    --neg: #C9A84C;
+    --neg-edge: #C9A84C;
+    --warn-bg: #2D3B2B;
+    --warn-ink: #EBD9A0;
+    --warn-line: #6B5E2C;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-text);
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.65;
+    font-variant-numeric: tabular-nums;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 40px;
+  }
+  main { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px; }
+  h1, h2, h3 { font-family: var(--font-head); margin: 0; line-height: 1.2; text-wrap: balance; }
+  h1 { font-size: clamp(1.75rem, 6vw, 2.5rem); font-weight: 800; letter-spacing: -0.01em; color: var(--band-ink); }
+  h1 em { color: var(--color-gold); font-style: normal; }
+  h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
+  h2::after { content: ""; display: block; width: 32px; height: 2px; margin-top: 8px; background: var(--color-gold); }
+  h3 { font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  p { margin: 0; }
+  .muted { color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  header {
+    display: flex; flex-direction: column; gap: 14px;
+    padding: 24px 20px;
+    border-radius: 16px;
+    color: var(--band-ink);
+    background-color: var(--color-dark);
+    background-image: radial-gradient(ellipse at 70% 50%, var(--glow), transparent 70%);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark { width: 44px; height: auto; flex: none; color: var(--color-gold); }
+  .overline { font-family: var(--font-head); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--color-gold); }
+  .asof { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
+  .asof .t { font-size: 1.0625rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .asof .city { color: var(--band-muted); font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-right: 8px; }
+  .age { font-size: 0.875rem; color: var(--band-muted); }
+  .banner { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--band-warn-line); background: var(--band-warn-bg); color: var(--band-warn-ink); font-size: 0.875rem; line-height: 1.5; }
+  .banner.stale { background: var(--band-stale-bg); color: var(--band-stale-ink); border-color: var(--band-stale-line); font-weight: 600; }
+  .banners { display: flex; flex-direction: column; gap: 8px; }
+  .banners:empty { display: none; }
+
+  section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .body { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .sub { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 16px 20px; margin: 0; }
+  .stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .stat dt { font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .stat dd { margin: 0; font-size: 1.0625rem; font-weight: 600; overflow-wrap: anywhere; }
+  .note { font-size: 0.875rem; color: var(--muted); overflow-wrap: anywhere; line-height: 1.55; }
+  .callout { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; line-height: 1.55; font-weight: 600; overflow-wrap: anywhere; }
+
+  .scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.875rem; line-height: 1.45; }
+  th, td { padding: 9px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--font-head); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.r, th.r { text-align: right; }
+  td.wrap { white-space: normal; min-width: 10rem; overflow-wrap: anywhere; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { display: inline-block; border: 1px solid var(--color-gold); color: var(--tag-ink); border-radius: 50px; padding: 1px 10px; font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; line-height: 1.5; white-space: nowrap; }
+  .empty { padding: 12px; color: var(--muted); font-size: 0.9375rem; }
+
+  /* Equity curve: one polyline in the positive token (3:1 on the card in both themes), the
+     starting capital as a thin dashed rule; the figures sit in the text under it. */
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .curve { display: block; width: 100%; height: auto; color: var(--pos); }
+  .curve .base { color: var(--muted); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 16px; font-size: 0.875rem; color: var(--muted); }
+  footer strong { color: var(--ink); font-weight: 600; }
+</style>
+
+<main>
+  <header>
+    <div class="brand">
+      <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100" fill="none" aria-hidden="true" focusable="false"><path d="M 12 90 C 18 82, 26 70, 34 56 C 40 44, 46 32, 52 22 C 56 16, 60 14, 64 18 C 68 22, 70 28, 66 34 C 62 40, 56 48, 58 54 C 60 60, 66 58, 72 52 C 78 46, 82 40, 86 42 C 90 44, 94 52, 100 64 C 104 72, 108 82, 112 90" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="overline">4884 · DATA</span>
+    </div>
+    <h1>Journal de <em>trading</em></h1>
+    <div class="asof" id="asof"></div>
+    <div class="banners" id="banners"></div>
+  </header>
+
+  <section id="s-resume" aria-labelledby="h-resume">
+    <h2 id="h-resume">Résumé</h2>
+    <div class="body" id="resume"></div>
+  </section>
+
+  <section id="s-open" aria-labelledby="h-open">
+    <h2 id="h-open">Trades ouverts</h2>
+    <div class="body" id="open"></div>
+  </section>
+
+  <section id="s-stats" aria-labelledby="h-stats">
+    <h2 id="h-stats">Statistiques</h2>
+    <div class="body" id="stats"></div>
+  </section>
+
+  <section id="s-closed" aria-labelledby="h-closed">
+    <h2 id="h-closed">Trades clôturés</h2>
+    <div class="body" id="closed"></div>
+  </section>
+
+  <footer>
+    <p id="disclaimer"><strong>Journal de faits : résultats passés, ni conseil ni prévision.</strong></p>
+  </footer>
+</main>
+
+<!--BRIEFING_JSON-->
+
+<script>
+(function () {
+  "use strict";
+
+  var NBSP = " ";
+  var MINUS = "−";
+  var STALE_HOURS = 12;
+  var SETUP_LABELS = {
+    breakout_20d: "Cassure du plus haut 20 j",
+    bull_flag: "Drapeau haussier",
+    reclaim_ma20: "Reprise de la moyenne 20 j",
+    oversold: "Survente",
+    oversold_bounce: "Rebond depuis la survente",
+    breakdown_20d: "Cassure du plus bas 20 j",
+    bear_flag: "Drapeau baissier",
+    lose_ma20: "Perte de la moyenne 20 j",
+    overbought: "Surachat",
+    overbought_reject: "Rejet depuis le surachat"
+  };
+  var SIDE_LABELS = { haussier: "Haussier", baissier: "Baissier" };
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var CURVE_W = 600;
+  var CURVE_H = 180;
+  var CURVE_PAD = 12;
+
+  function $(id) { return document.getElementById(id); }
+
+  function h(tag, cls) {
+    var el = document.createElement(tag);
+    if (cls) { el.className = cls; }
+    for (var i = 2; i < arguments.length; i++) {
+      var c = arguments[i];
+      if (c === null || c === undefined || c === false) { continue; }
+      el.append(c);
+    }
+    return el;
+  }
+
+  function svg(tag, attrs) {
+    var el = document.createElementNS(SVG_NS, tag);
+    Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  function has(v) { return v !== null && v !== undefined && v !== "" && !(typeof v === "number" && !isFinite(v)); }
+  function num(v) { return typeof v === "number" && isFinite(v); }
+  function text(v) { return has(v) ? String(v) : "n/a"; }
+  function list(v) { return Array.isArray(v) ? v : []; }
+  function obj(v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; }
+  function fixed(v, d) { return num(v) ? v.toFixed(d) : "n/a"; }
+  function signed(v, d) {
+    if (!num(v)) { return "n/a"; }
+    return (v > 0 ? "+" : v < 0 ? MINUS : "") + Math.abs(v).toFixed(d);
+  }
+  function usd(v) { return num(v) ? signed(v, 2) + " USD" : "n/a"; }
+  function plainUsd(v) { return num(v) ? v.toFixed(2) + " USD" : "n/a"; }
+  function pct(v) { return num(v) ? (v * 100).toFixed(1) + " %" : "n/a"; }
+  function grouped(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, NBSP); }
+  function own(map, key) { return Object.prototype.hasOwnProperty.call(map, key); }
+  function sideLabel(s) { return own(SIDE_LABELS, s) ? SIDE_LABELS[s] : text(s); }
+  function empty(msg) { return h("p", "empty", msg); }
+  function trades(journal, status) {
+    return list(obj(journal).trades).filter(function (t) { return obj(t).status === status; });
+  }
+
+  var PARIS_FMT = null;
+  function paris(iso) {
+    var t = Date.parse(iso);
+    if (!isFinite(t)) { return "n/a"; }
+    try {
+      if (!PARIS_FMT) {
+        PARIS_FMT = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", year: "numeric",
+          month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+      }
+      var p = {};
+      PARIS_FMT.formatToParts(new Date(t)).forEach(function (x) { p[x.type] = x.value; });
+      return p.year + "-" + p.month + "-" + p.day + " " + p.hour + ":" + p.minute;
+    } catch (e) { return text(iso); }
+  }
+
+  /* The grid of a price, as plan.price_decimals: forex 5 (3 on a JPY quote), else by size. */
+  function level(symbol, v) {
+    if (!num(v)) { return "n/a"; }
+    var m = /^([A-Z]{3})([A-Z]{3})=X$/.exec(symbol || "");
+    var a = Math.abs(v);
+    return v.toFixed(m ? (m[2] === "JPY" ? 3 : 5) : a < 10 ? 4 : a < 100 ? 3 : 2);
+  }
+
+  function table(cols, rows) {
+    var head = h("tr");
+    cols.forEach(function (c) { head.append(h("th", c.cls, c.label)); });
+    var body = h("tbody");
+    rows.forEach(function (r) {
+      var tr = h("tr");
+      cols.forEach(function (c) { tr.append(h("td", c.cls, c.cell(r))); });
+      body.append(tr);
+    });
+    return h("div", "scroll", h("table", "", h("thead", "", head), body));
+  }
+
+  function stat(label, value) {
+    return h("div", "stat", h("dt", "", label), h("dd", "", value));
+  }
+
+  function put(id, nodes) {
+    var box = $(id);
+    box.replaceChildren.apply(box, nodes);
+  }
+
+  /* ---------------------------------------------------------------- header */
+
+  function renderHeader(d) {
+    var asof = obj(d.as_of);
+    var box = $("asof");
+    box.replaceChildren(h("span", "", h("span", "city", "Paris"), h("span", "t", text(asof.paris))));
+    var banners = [];
+    var t = Date.parse(asof.iso);
+    if (isFinite(t)) {
+      var hours = (Date.now() - t) / 3600000;
+      var ageText = hours < 1 ? "moins d’une heure" : hours < 48
+        ? Math.floor(hours) + " h" : Math.floor(hours / 24) + " j";
+      box.append(h("span", "age", "Page produite il y a " + ageText));
+      if (hours >= STALE_HOURS) {
+        banners.push(h("p", "banner stale", "Cette page date de plus de " + STALE_HOURS +
+          " h : les trades ouverts ont pu changer. Relancer la commande page."));
+      }
+    }
+    put("banners", banners);
+  }
+
+  /* ---------------------------------------------------------------- résumé */
+
+  function renderResume(d) {
+    var nOpen = trades(d.journal, "open").length;
+    var nClosed = trades(d.journal, "closed").length;
+    if (!nOpen && !nClosed) { put("resume", [empty("Aucun trade enregistré pour l'instant.")]); return; }
+    var s = obj(d.stats);
+    var o = obj(s.overall);
+    var out = [h("dl", "stats",
+      stat("Trades ouverts", String(nOpen)),
+      stat("Trades clôturés", String(nClosed)),
+      stat("R total", num(o.total_r) ? signed(o.total_r, 2) + " R" : "n/a"),
+      stat("Résultat", usd(o.pnl_usd)),
+      stat("Taux positif", pct(o.win_rate)),
+      stat("R moyen par trade", fixed(o.expectancy_r, 2)))];
+    if (has(s.sample_warning)) { out.push(h("p", "callout", "Attention : " + s.sample_warning + ".")); }
+    if (num(o.n_estimated) && o.n_estimated > 0) {
+      out.push(h("p", "note", o.n_estimated + " résultat(s) estimé(s), hors frais, swap et glissement."));
+    }
+    if (num(o.n_no_r) && o.n_no_r > 0) {
+      out.push(h("p", "note", o.n_no_r + " trade(s) sans R, laissé(s) hors des moyennes en R."));
+    }
+    if (!has(d.stats)) { out.push(h("p", "note", "Statistiques indisponibles.")); }
+    put("resume", out);
+  }
+
+  /* --------------------------------------------------------- trades ouverts */
+
+  function sizeText(entry) {
+    var e = obj(entry);
+    if (num(e.lots)) {
+      return String(e.lots) + (e.lots >= 2 ? " lots" : " lot") +
+        (num(e.units) ? " (" + grouped(e.units) + " unités)" : "");
+    }
+    if (num(e.size)) { return "taille " + String(e.size); }
+    return "n/a";
+  }
+
+  function byTime(key, sign) {
+    return function (a, b) {
+      return sign * ((Date.parse(obj(obj(a)[key]).time) || 0) - (Date.parse(obj(obj(b)[key]).time) || 0));
+    };
+  }
+
+  function renderOpen(d) {
+    var rows = trades(d.journal, "open").sort(byTime("entry", 1));
+    if (!rows.length) { put("open", [empty("Aucun trade ouvert.")]); return; }
+    put("open", [table([
+      { label: "Id", cell: function (t) { return text(t.id); } },
+      { label: "Symbole", cell: function (t) { return text(t.symbol); } },
+      { label: "Sens", cell: function (t) { return sideLabel(t.side); } },
+      { label: "Ouverture (Paris)", cell: function (t) { return paris(obj(t.entry).time); }, cls: "num" },
+      { label: "Entrée", cell: function (t) { return level(t.symbol, obj(t.entry).price); }, cls: "num r" },
+      { label: "Stop", cell: function (t) { return level(t.symbol, t.stop); }, cls: "num r" },
+      { label: "Cible", cell: function (t) { return num(t.target) ? level(t.symbol, t.target) : "aucune"; }, cls: "num r" },
+      { label: "Taille", cell: function (t) { return sizeText(t.entry); } },
+      { label: "Risque prévu", cell: function (t) { return num(t.risk_usd) ? plainUsd(t.risk_usd) : "inconnu"; }, cls: "num r" }
+    ], rows), h("p", "note", "Stop et cible en vigueur. Risque prévu : perte au stop pour l'entrée saisie, sans écart d'ouverture ni glissement.")]);
+  }
+
+  /* ------------------------------------------------------------ statistiques */
+
+  function ruleLabel(key) {
+    return own(SETUP_LABELS, key) ? SETUP_LABELS[key] + " (" + key + ")" : text(key);
+  }
+
+  function groupTable(groups, label) {
+    return table([
+      { label: "Groupe", cell: function (g) { return label(g.key); } },
+      { label: "n", cell: function (g) { return text(g.n); }, cls: "num r" },
+      { label: "Taux positif", cell: function (g) { return pct(g.win_rate); }, cls: "num r" },
+      { label: "R moyen", cell: function (g) { return fixed(g.avg_r, 2); }, cls: "num r" },
+      { label: "R total", cell: function (g) { return signed(g.total_r, 2); }, cls: "num r" },
+      { label: "Résultat", cell: function (g) { return usd(g.pnl_usd); }, cls: "num r" },
+      { label: "Remarque", cell: function (g) { return g.few ? h("span", "tag", "peu de trades") : ""; } }
+    ], groups);
+  }
+
+  function sub(title, nodes) {
+    return h.apply(null, ["div", "sub", h("h3", "", title)].concat(nodes));
+  }
+
+  function groupsOrNone(groups, label) {
+    return list(groups).length ? groupTable(list(groups), label) : empty("Aucun groupe.");
+  }
+
+  function famSuccess(s) {
+    var o = obj(s.overall);
+    return sub("Réussite et R", [h("dl", "stats",
+      stat("Trades clôturés (n)", text(o.n)),
+      stat("Positifs", text(o.positive)),
+      stat("Négatifs", text(o.negative)),
+      stat("À l'équilibre", text(o.flat)),
+      stat("Taux positif", pct(o.win_rate)),
+      stat("R moyen des positifs", signed(o.avg_r_positive, 2)),
+      stat("R moyen des négatifs", signed(o.avg_r_negative, 2)),
+      stat("Espérance (R moyen par trade)", signed(o.expectancy_r, 2)),
+      stat("R total", num(o.total_r) ? signed(o.total_r, 2) + " R" : "n/a"),
+      stat("Résultat", usd(o.pnl_usd))),
+      h("p", "note", "Un trade est à l'équilibre quand son R est compris entre −0,05 et +0,05. " +
+        "Un trade sans R compte dans n, pas dans les moyennes en R.")]);
+  }
+
+  function famRules(s) {
+    return sub("Par règle et par sens", [
+      h("h3", "", "Par sens"),
+      groupsOrNone(s.by_side, sideLabel),
+      h("h3", "", "Par règle"),
+      groupsOrNone(s.by_rule, ruleLabel),
+      h("p", "note", "Un trade compte dans chacune de ses règles : les lignes se recoupent. " +
+        "Hors plan : trade pris sans idée du briefing.")]);
+  }
+
+  function famMarkets(s) {
+    return sub("Par paire, session et jour", [
+      h("h3", "", "Par paire"),
+      groupsOrNone(s.by_symbol, text),
+      h("h3", "", "Par session d'entrée"),
+      groupsOrNone(s.by_session, text),
+      h("h3", "", "Par jour de la semaine (Paris)"),
+      groupsOrNone(s.by_weekday, text),
+      h("p", "note", "Session et jour suivent l'heure d'entrée. Une ligne de moins de 5 trades porte la mention « peu de trades ».")]);
+  }
+
+  function famErrors(s) {
+    var rows = list(s.errors);
+    return sub("Erreurs", [rows.length ? table([
+      { label: "Étiquette", cell: function (r) { return text(r.tag); } },
+      { label: "n", cell: function (r) { return text(r.n); }, cls: "num r" },
+      { label: "R moyen", cell: function (r) { return fixed(r.avg_r, 2); }, cls: "num r" },
+      { label: "R total", cell: function (r) { return signed(r.total_r, 2); }, cls: "num r" }
+    ], rows) : empty("Aucune étiquette d'erreur sur les trades clôturés.")]);
+  }
+
+  /* One polyline: the starting capital then the capital after each closed trade, in closing
+     order. No curve below two points. */
+  function curve(eq) {
+    var values = [eq.start].concat(list(eq.points).map(function (p) { return obj(p).equity; }))
+      .filter(num);
+    if (values.length < 2) { return null; }
+    var lo = Math.min.apply(null, values);
+    var hi = Math.max.apply(null, values);
+    if (hi === lo) { hi = lo + 1; }
+    function y(v) { return CURVE_PAD + (hi - v) / (hi - lo) * (CURVE_H - 2 * CURVE_PAD); }
+    var pts = values.map(function (v, i) {
+      return (CURVE_PAD + i / (values.length - 1) * (CURVE_W - 2 * CURVE_PAD)).toFixed(1) + "," + y(v).toFixed(1);
+    });
+    var box = svg("svg", { viewBox: "0 0 " + CURVE_W + " " + CURVE_H, role: "img", class: "curve",
+      "aria-label": "Courbe de capital : " + values.length + " points" });
+    if (num(eq.start)) {
+      box.appendChild(svg("line", { class: "base", x1: CURVE_PAD, x2: CURVE_W - CURVE_PAD,
+        y1: y(eq.start).toFixed(1), y2: y(eq.start).toFixed(1), stroke: "currentColor",
+        "stroke-width": "1", "stroke-dasharray": "4 4" }));
+    }
+    box.appendChild(svg("polyline", { points: pts.join(" "), fill: "none", stroke: "currentColor",
+      "stroke-width": "2", "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    return { node: box, lo: lo, hi: hi };
+  }
+
+  function famEquity(s) {
+    var q = obj(s.equity);
+    var streak = obj(q.worst_streak);
+    var out = [h("dl", "stats",
+      stat("Capital de départ", plainUsd(q.start)),
+      stat("Capital après le dernier trade", plainUsd(q.end)),
+      stat("Pire drawdown", num(q.max_drawdown_usd)
+        ? q.max_drawdown_usd.toFixed(2) + " USD (" + fixed(q.max_drawdown_pct, 2) + " % du pic)" : "n/a"),
+      stat("Plafond de risque cumulé", num(q.cap_pct) ? q.cap_pct + " %" : "n/a"),
+      stat("Pire série de trades négatifs", num(streak.n) && streak.n > 0
+        ? streak.n + " trade(s), " + signed(streak.r, 2) + " R" : "aucune"))];
+    if (num(q.max_drawdown_pct) && num(q.cap_pct)) {
+      out.push(h("p", "note", q.max_drawdown_pct > q.cap_pct
+        ? "Le pire drawdown dépasse le plafond de risque cumulé de la configuration."
+        : "Le pire drawdown ne dépasse pas le plafond de risque cumulé de la configuration."));
+    }
+    var c = curve(q);
+    if (c) {
+      out.push(h("div", "panel", c.node, h("p", "note",
+        "Capital après chaque trade clôturé, dans l'ordre des clôtures (le premier point est le capital de départ). " +
+        "Plus bas : " + c.lo.toFixed(2) + " USD ; plus haut : " + c.hi.toFixed(2) + " USD.")));
+    } else {
+      out.push(h("p", "note", "La courbe apparaît à partir d'un trade clôturé."));
+    }
+    return sub("Capital et drawdown", out);
+  }
+
+  function renderStats(d) {
+    if (!has(d.stats) || typeof d.stats !== "object") {
+      put("stats", [empty("Statistiques indisponibles.")]);
+      return;
+    }
+    var s = d.stats;
+    var out = [];
+    if (has(s.sample_warning)) {
+      out.push(h("p", "callout", "Attention : " + s.sample_warning + ". Chaque ligne affiche son nombre de trades n."));
+    }
+    if (!num(s.n_closed) || s.n_closed === 0) {
+      out.push(empty("Aucun trade clôturé pour l'instant."));
+      put("stats", out);
+      return;
+    }
+    [famSuccess, famRules, famMarkets, famErrors, famEquity].forEach(function (f) { out.push(f(s)); });
+    put("stats", out);
+  }
+
+  /* --------------------------------------------------------- trades clôturés */
+
+  function resultSource(t) {
+    return obj(t.result).source === "courtier" ? "courtier" : "estimé, hors frais";
+  }
+
+  function tagsCell(t) {
+    var tags = list(t.tags);
+    if (!tags.length) { return ""; }
+    var box = h("span", "tags");
+    tags.forEach(function (x) { box.append(h("span", "tag", text(x))); });
+    return box;
+  }
+
+  function renderClosed(d) {
+    var rows = trades(d.journal, "closed").sort(byTime("exit", -1));
+    if (!rows.length) { put("closed", [empty("Aucun trade clôturé.")]); return; }
+    put("closed", [table([
+      { label: "Id", cell: function (t) { return text(t.id); } },
+      { label: "Symbole", cell: function (t) { return text(t.symbol); } },
+      { label: "Sens", cell: function (t) { return sideLabel(t.side); } },
+      { label: "Entrée (Paris)", cell: function (t) { return paris(obj(t.entry).time); }, cls: "num" },
+      { label: "Prix d'entrée", cell: function (t) { return level(t.symbol, obj(t.entry).price); }, cls: "num r" },
+      { label: "Sortie (Paris)", cell: function (t) { return paris(obj(t.exit).time); }, cls: "num" },
+      { label: "Prix de sortie", cell: function (t) { return level(t.symbol, obj(t.exit).price); }, cls: "num r" },
+      { label: "Motif", cell: function (t) { return text(obj(t.exit).reason); } },
+      { label: "Résultat", cell: function (t) { return usd(obj(t.result).pnl_usd); }, cls: "num r" },
+      { label: "R", cell: function (t) { return signed(obj(t.result).r, 2); }, cls: "num r" },
+      { label: "Source", cell: resultSource },
+      { label: "Étiquettes", cell: tagsCell, cls: "wrap" }
+    ], rows), h("p", "note",
+      "Source « courtier » : résultat donné par le courtier. « estimé, hors frais » : calculé sans frais, swap ni glissement.")]);
+  }
+
+  /* ------------------------------------------------------------------ start */
+
+  function section(fn, d, id) {
+    try { fn(d); }
+    catch (e) {
+      var box = $(id);
+      if (box) { box.replaceChildren(empty("Section indisponible : données inattendues.")); }
+    }
+  }
+
+  var d;
+  try { d = JSON.parse($("journal").textContent); }
+  catch (e) { d = null; }
+  if (!d || typeof d !== "object") {
+    put("banners", [h("p", "banner stale", "Journal illisible : relancer la commande page.")]);
+    return;
+  }
+  section(renderHeader, d, "asof");
+  section(renderResume, d, "resume");
+  section(renderOpen, d, "open");
+  section(renderStats, d, "stats");
+  section(renderClosed, d, "closed");
+})();
+</script>

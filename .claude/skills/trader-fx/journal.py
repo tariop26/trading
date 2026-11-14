@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 import config as fxconfig
 import jstats
+import page
 import plan
 import sessions
 import sizing
@@ -70,6 +71,16 @@ def save_journal(path, journal):
 def write_json_atomic(path, doc, backup=False):
     """`doc` as JSON at `path`, written to a temporary file then moved over the old one;
     with `backup` the previous file is first copied to `path + ".bak"`."""
+    try:
+        content = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    except (TypeError, ValueError):
+        raise JournalError("Écriture impossible : %s." % path)
+    write_text_atomic(path, content, backup=backup)
+
+
+def write_text_atomic(path, content, backup=False):
+    """`content` (text) at `path`, written to a temporary file in the same folder then moved
+    over the old one: a failure leaves the old file untouched and no temporary file behind."""
     folder = os.path.dirname(os.path.abspath(path))
     tmp = None
     try:
@@ -77,14 +88,13 @@ def write_json_atomic(path, doc, backup=False):
         if backup and os.path.exists(path):
             shutil.copyfile(path, path + ".bak")
         fd, tmp = tempfile.mkstemp(prefix=".journal-", suffix=".tmp", dir=folder)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(doc, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
         tmp = None
-    except (OSError, TypeError, ValueError):
+    except OSError:
         raise JournalError("Écriture impossible : %s." % path)
     finally:
         if tmp is not None and os.path.exists(tmp):
@@ -316,6 +326,8 @@ DEFAULT_JOURNAL = "trader/fx/journal.json"
 DEFAULT_CONFIG = "trader/fx/config.json"
 DEFAULT_BRIEFING = "trader/fx/briefing.json"
 DEFAULT_ALERTS = "trader/fx/alerts.json"
+DEFAULT_PAGE = "trader/fx/journal.html"
+TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "journal_template.html")
 
 
 class _Parser(argparse.ArgumentParser):
@@ -371,6 +383,9 @@ def build_parser():
 
     al = sub.add_parser("alerts", parents=[common], help="écrit les règles de stop et de cible")
     al.add_argument("--out", default=DEFAULT_ALERTS)
+
+    pg = sub.add_parser("page", parents=[common], help="écrit la page « Journal de trading »")
+    pg.add_argument("--out", default=DEFAULT_PAGE)
     return p
 
 
@@ -584,6 +599,25 @@ def cmd_alerts(args, deps):
     return 0
 
 
+def cmd_page(args, deps):
+    doc = load_journal(args.journal)
+    cfg = _load_config(args)
+    now = deps["now"]()
+    stats = jstats.compute_stats(doc, capital=float(cfg["account"]["capital"]),
+                                 cap_pct=float(cfg["risk"]["max_total_pct"]))
+    data = {"as_of": {"iso": _iso(now),
+                      "paris": now.astimezone(sessions.PARIS).strftime("%Y-%m-%d %H:%M")},
+            "journal": doc, "stats": stats}
+    try:
+        html = page.render_page(data, TEMPLATE, script_id="journal")
+    except (OSError, ValueError):
+        raise JournalError("Gabarit de la page introuvable ou invalide : %s." % TEMPLATE)
+    write_text_atomic(args.out, html)
+    print("Page écrite : %s (%d trade(s) clôturé(s), %d ouvert(s))."
+          % (args.out, stats["n_closed"], stats["n_open"]))
+    return 0
+
+
 def _utf8_streams():
     """Piped output on Windows defaults to the ANSI code page: force UTF-8."""
     for stream in (sys.stdout, sys.stderr):
@@ -592,7 +626,7 @@ def _utf8_streams():
 
 
 COMMANDS = {"open": cmd_open, "amend": cmd_amend, "close": cmd_close, "list": cmd_list,
-            "stats": cmd_stats, "alerts": cmd_alerts}
+            "stats": cmd_stats, "alerts": cmd_alerts, "page": cmd_page}
 
 
 def main(argv=None, deps=None):
