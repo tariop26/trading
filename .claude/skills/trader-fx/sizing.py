@@ -195,3 +195,58 @@ def size_idea(symbol, entry, stop, prices, config):
     if contract is None:
         return _to_confirm(NOTE_NO_CONTRACT)
     return size_contract(symbol, entry, stop, contract, capital, risk_pct, leverage_max)
+
+
+def _usd_per_unit_move(symbol, prices, contracts, ref_price):
+    """USD value of a 1.0 move of the price, per unit of quantity, or None.
+
+    Forex quoted in USD: 1. USD-base pair: 1 / ref_price (the quote converts at the rate
+    where the loss or gain is realised: the stop, or the exit). Cross: the quote-to-USD rate
+    from `prices` (the caller passes the rate it wants). Contract instrument: its
+    usd_per_point from the table.
+    """
+    pair = strength.pair_currencies(symbol)
+    if pair is not None:
+        base, quote = pair
+        if base == "USD" and quote != "USD":
+            return 1.0 / ref_price if _positive(ref_price) else None
+        return usd_rate(quote, prices)
+    contract = (contracts or {}).get(symbol)
+    if not isinstance(contract, dict):
+        return None
+    per_point = contract.get("usd_per_point")
+    return float(per_point) if _positive(per_point) else None
+
+
+def risk_at(symbol, entry, stop, qty, prices, contracts):
+    """USD lost if the stop is hit, for `qty` units (forex) or contracts, or None.
+
+    None when a conversion rate or a contract entry is missing, or an input is not a positive
+    number. Same conventions as the sizer: USD-base pairs convert at the stop, crosses at the
+    rate given in `prices`. Rounded to the cent. Gaps and slippage are never included.
+    """
+    dist = _distance(entry, stop)
+    if dist is None or not _positive(qty) or not _positive(entry) or not _positive(stop):
+        return None
+    per_unit = _usd_per_unit_move(symbol, prices, contracts, stop)
+    if per_unit is None:
+        return None
+    return usd_cents(qty * dist * per_unit)
+
+
+def pnl_at(symbol, side, entry, exit_price, qty, prices, contracts):
+    """Signed USD result of a trade closed at `exit_price` (before fees, swap, slippage), or None.
+
+    A haussier trade gains `exit - entry`, a baissier trade `entry - exit`. USD-base pairs
+    convert at the exit price, crosses at the rate given in `prices`. None when something
+    needed is missing or invalid.
+    """
+    if side not in ("haussier", "baissier"):
+        return None
+    if not (_positive(entry) and _positive(exit_price) and _positive(qty)):
+        return None
+    diff = (exit_price - entry) if side == "haussier" else (entry - exit_price)
+    per_unit = _usd_per_unit_move(symbol, prices, contracts, exit_price)
+    if per_unit is None:
+        return None
+    return usd_cents(qty * diff * per_unit)

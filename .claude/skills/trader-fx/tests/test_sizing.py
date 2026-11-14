@@ -360,5 +360,72 @@ class TestSizeIdea(unittest.TestCase):
         self.assertEqual(s["risk_usd"], 2000.0)
 
 
+class TestRiskAndPnlAt(unittest.TestCase):
+    """risk_at / pnl_at: USD risk at the stop and USD result of a real trade (journal)."""
+    FCHI = {"^FCHI": {"usd_per_point": 1.1, "step": 0.1, "min": 0.1}}
+
+    def test_risk_at_hand_computed_examples(self):
+        self.assertEqual(sizing.risk_at("EURUSD=X", 1.1000, 1.0950, 100000,
+                                        {"EURUSD=X": 1.10}, {}), 500.0)
+        # USD base: loss converts at the stop rate, 99000 * 0.75 / 149.25 = 497.4874
+        self.assertEqual(sizing.risk_at("USDJPY=X", 150.00, 149.25, 99000,
+                                        {"USDJPY=X": 150.0}, {}), 497.49)
+        # cross: 88000 * 0.005 * (1 / 0.88) = 500.0
+        self.assertEqual(sizing.risk_at("GBPCHF=X", 1.1000, 1.0950, 88000,
+                                        {"USDCHF=X": 0.88}, {}), 500.0)
+        # contract: 4.5 * 100 * 1.1 = 495.0
+        self.assertEqual(sizing.risk_at("^FCHI", 8000, 7900, 4.5, {}, self.FCHI), 495.0)
+
+    def test_pnl_at_hand_computed_examples(self):
+        p = {"EURUSD=X": 1.10}
+        self.assertEqual(sizing.pnl_at("EURUSD=X", "haussier", 1.1000, 1.1050, 100000, p, {}), 500.0)
+        self.assertEqual(sizing.pnl_at("EURUSD=X", "baissier", 1.1000, 1.1050, 100000, p, {}), -500.0)
+        # USD base: 100000 * 1.5 / exit
+        self.assertEqual(sizing.pnl_at("USDJPY=X", "haussier", 150.00, 151.50, 100000, {}, {}), 990.10)
+        self.assertEqual(sizing.pnl_at("USDJPY=X", "baissier", 150.00, 148.50, 100000, {}, {}), 1010.10)
+        # cross: 45000 * 1.6 JPY / 159.875 = 450.35
+        self.assertEqual(sizing.pnl_at("EURJPY=X", "baissier", 176.70, 175.10, 45000,
+                                       {"USDJPY=X": 159.875}, {}), 450.35)
+        self.assertEqual(sizing.pnl_at("^FCHI", "haussier", 8000, 8050, 4.5, {}, self.FCHI), 247.5)
+
+    def test_unknown_conversion_gives_none(self):
+        self.assertIsNone(sizing.risk_at("GBPZAR=X", 22.0, 21.8, 10000, {}, {}))
+        self.assertIsNone(sizing.pnl_at("GBPZAR=X", "haussier", 22.0, 22.5, 10000, {}, {}))
+        self.assertIsNone(sizing.risk_at("^GDAXI", 18000, 17900, 1.0, {}, {}))
+        self.assertIsNone(sizing.pnl_at("^GDAXI", "haussier", 18000, 18100, 1.0, {}, {}))
+
+    def test_bad_inputs_give_none_never_raise(self):
+        p = {"EURUSD=X": 1.10}
+        for qty in (0, -1, None, "x", float("nan")):
+            self.assertIsNone(sizing.risk_at("EURUSD=X", 1.1, 1.09, qty, p, {}))
+            self.assertIsNone(sizing.pnl_at("EURUSD=X", "haussier", 1.1, 1.2, qty, p, {}))
+        self.assertIsNone(sizing.risk_at("EURUSD=X", 1.1, 1.1, 1000, p, {}))      # no distance
+        self.assertIsNone(sizing.risk_at("EURUSD=X", "a", 1.09, 1000, p, {}))
+        self.assertIsNone(sizing.pnl_at("EURUSD=X", "haussier", 1.1, -1.0, 1000, p, {}))
+        self.assertIsNone(sizing.pnl_at("EURUSD=X", "sideways", 1.1, 1.2, 1000, p, {}))
+
+    def test_risk_at_matches_size_idea(self):
+        cfg = config_defaults()
+        rng = random.Random(7)
+        for _ in range(200):
+            sym, px, base_prices = rng.choice([
+                ("EURUSD=X", 1.10, {"EURUSD=X": 1.10}),
+                ("USDJPY=X", 150.0, {"USDJPY=X": 150.0}),
+                ("GBPCHF=X", 1.10, {"USDCHF=X": 0.88, "GBPUSD=X": 1.30})])
+            entry = px * rng.uniform(0.98, 1.02)
+            stop = entry * rng.uniform(0.985, 0.998)
+            s = sizing.size_idea(sym, entry, stop, base_prices, cfg)
+            if s["status"] != "ok":
+                continue
+            r = sizing.risk_at(sym, entry, stop, s["units"], base_prices, {})
+            self.assertLessEqual(r, 500.0 + 0.01)
+            self.assertAlmostEqual(r, s["risk_usd"], places=2)
+
+
+def config_defaults():
+    import config
+    return config.defaults()
+
+
 if __name__ == "__main__":
     unittest.main()
