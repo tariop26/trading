@@ -1,0 +1,21 @@
+# THROWAWAY spike: checks that a GitHub runner can reach Yahoo, the calendar feed and Telegram.
+# Run it by hand: Actions tab > "Probe sources" > Run workflow. It never runs by itself.
+name: Probe sources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe Yahoo, the calendar feed and Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 probe/probe.py
