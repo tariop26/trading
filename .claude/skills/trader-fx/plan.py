@@ -17,6 +17,7 @@ SHORT = "baissier"
 
 REASON_CONTRADICTORY = "signaux contradictoires"
 REASON_NO_ATR = "ATR indisponible"
+REASON_IMPOSSIBLE = "plan impossible : stop ou cible sous zéro"
 
 MINUS = "−"
 
@@ -132,7 +133,7 @@ def make_plan(analysis, side, config):
     """
     last = analysis.get("last")
     atr_pct = analysis.get("atr_pct")
-    if not _number(last) or not _number(atr_pct) or atr_pct <= 0:
+    if not _number(last) or last <= 0 or not _number(atr_pct) or atr_pct <= 0:
         return None
     plan_cfg = config.get("plan", config)
     mult = plan_cfg["stop_atr_mult"]
@@ -192,7 +193,8 @@ def build_trade_ideas(analyses, config):
     budget = capital * per_trade_pct / 100.0
 
     prices = {a["symbol"]: a["last"] for a in analyses
-              if strength.pair_currencies(a.get("symbol")) is not None}
+              if strength.pair_currencies(a.get("symbol")) is not None
+              and _number(a.get("last")) and a["last"] > 0}
 
     dropped = []
     candidates = []
@@ -206,6 +208,9 @@ def build_trade_ideas(analyses, config):
         p = make_plan(a, side, config)
         if p is None:
             dropped.append({"symbol": a["symbol"], "reason": REASON_NO_ATR})
+            continue
+        if p["stop"] <= 0 or p["target"] <= 0:
+            dropped.append({"symbol": a["symbol"], "reason": REASON_IMPOSSIBLE})
             continue
         points, why = score(a, side, triggers)
         candidates.append({"analysis": a, "symbol": a["symbol"], "side": side,

@@ -8,6 +8,8 @@ import config as cfgmod
 import plan
 
 MINUS = "−"
+FORBIDDEN = re.compile(
+    r"\b(achat|acheter|vente|vendre|buy|sell|gagnant|profit)\b", re.IGNORECASE)
 
 
 def cfg(**over):
@@ -252,6 +254,54 @@ class TestBuildTradeIdeas(unittest.TestCase):
                          [{"symbol": s, "reason": "ATR indisponible"}
                           for s in ("^A", "^B", "^C")])
 
+    def test_non_positive_stop_or_target_is_skipped_without_sizing(self):
+        reason = "plan impossible : stop ou cible sous zéro"
+        # haussier: atr 80 % of 100 -> stop 100 - 1.5 * 80 = -20
+        with mock.patch.object(plan.sizing, "size_idea", return_value=ok_size()) as m:
+            out = plan.build_trade_ideas(
+                [an("^A", setups=["breakout_20d"], atr_pct=80.0)], cfg())
+        self.assertEqual(out["ideas"], [])
+        self.assertEqual(out["skipped"], [{"symbol": "^A", "reason": reason}])
+        m.assert_not_called()
+        # baissier: last 3.0, atr 4 %, mult 5, target_r 5 -> target 3 - 5 * 0.6 = 0.0
+        c = cfg(plan={"stop_atr_mult": 5.0, "target_r": 5.0})
+        with mock.patch.object(plan.sizing, "size_idea", return_value=ok_size()) as m:
+            out = plan.build_trade_ideas(
+                [an("NG=F", short=["breakdown_20d"], last=3.0, atr_pct=4.0)], c)
+        self.assertEqual(out["ideas"], [])
+        self.assertEqual(out["skipped"], [{"symbol": "NG=F", "reason": reason}])
+        m.assert_not_called()
+
+    def test_non_positive_last_is_atr_unavailable(self):
+        for last in (0, 0.0, -5.0):
+            self.assertIsNone(plan.make_plan(an("^X", last=last), "haussier", cfg()))
+        with mock.patch.object(plan.sizing, "size_idea", return_value=ok_size()) as m:
+            out = plan.build_trade_ideas(
+                [an("^A", setups=["breakout_20d"], last=0),
+                 an("^B", setups=["breakout_20d"], last=-5.0)], cfg())
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "^A", "reason": "ATR indisponible"},
+                          {"symbol": "^B", "reason": "ATR indisponible"}])
+        m.assert_not_called()
+
+    def test_analysis_without_last_key_does_not_raise(self):
+        a = an("EURUSD=X", setups=["breakout_20d"])
+        del a["last"]
+        b = an("USDJPY=X", setups=["breakout_20d"], last=150.0)
+        out = plan.build_trade_ideas([a, b], cfg())
+        self.assertEqual(out["skipped"],
+                         [{"symbol": "EURUSD=X", "reason": "ATR indisponible"}])
+        self.assertEqual([i["symbol"] for i in out["ideas"]], ["USDJPY=X"])
+
+    def test_early_drops_keep_input_order_with_impossible_plan(self):
+        analyses = [an("^Z", setups=["bull_flag"], atr_pct=80.0),
+                    an("^Y", setups=["bull_flag"], short=["bear_flag"]),
+                    an("^X", setups=["bull_flag"], atr_pct=None),
+                    an("^V", setups=["bull_flag"])]
+        out = plan.build_trade_ideas(analyses, cfg())
+        self.assertEqual([s["symbol"] for s in out["skipped"]], ["^Z", "^Y", "^X"])
+        self.assertEqual([i["symbol"] for i in out["ideas"]], ["^V"])
+
     def test_contradictory_is_skipped_and_order(self):
         analyses = [an("^Z", setups=["bull_flag"], short=["bear_flag"]),
                     an("^Y", setups=["bull_flag"], atr_pct=None),
@@ -356,12 +406,22 @@ class TestBuildTradeIdeas(unittest.TestCase):
 
     def test_no_forbidden_vocabulary(self):
         analyses = [an("^A", setups=["reclaim_ma20", "oversold_bounce"], trend="up", rsi=20),
-                    an("^B", short=["lose_ma20", "overbought_reject"], trend="down", rsi=80)]
+                    an("^B", short=["lose_ma20", "overbought_reject"], trend="down", rsi=80),
+                    an("^C", setups=["bull_flag"], short=["bear_flag"]),
+                    an("^D", setups=["bull_flag"], atr_pct=None),
+                    an("^E", setups=["bull_flag"], atr_pct=80.0),
+                    an("USDJPY=X", setups=["breakout_20d"], trend="down", rsi=75)]
         out = plan.build_trade_ideas(analyses, cfg())
-        text = repr(out).lower()
-        # whole words only: "surachat" (overbought) is legitimate vocabulary
-        self.assertIsNone(re.search(
-            r"(achat|acheter|vente|vendre|buy|sell|gagnant|profit)", text))
+        self.assertTrue(out["ideas"] and out["skipped"])
+        text = repr(out)
+        # negative controls: the regex really matches whole forbidden words...
+        self.assertIsNotNone(FORBIDDEN.search("un achat"))
+        self.assertIsNotNone(FORBIDDEN.search("la vente"))
+        self.assertIsNotNone(FORBIDDEN.search("BUY now"))
+        # ...and not legitimate words that merely contain them
+        self.assertIsNone(FORBIDDEN.search("surachat"))
+        self.assertIsNone(FORBIDDEN.search("survente"))
+        self.assertIsNone(FORBIDDEN.search(text))
 
 
 if __name__ == "__main__":
