@@ -9,8 +9,10 @@ import subprocess
 import tempfile
 import unittest
 
+import briefing
 import fx
 import page
+import test_briefing as tb
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIX = os.path.join(HERE, "fixtures")
@@ -172,6 +174,28 @@ class TestInlineScriptRuns(unittest.TestCase):
         self.assertIn("2026-11-10 10:00", out)   # New York
         for bad in ("undefined", "NaN", "null", "None"):
             self.assertNotIn(bad, out)
+
+    def test_script_tags_an_asia_range_still_forming(self):
+        b = sample()
+        b["day_plan"]["levels"][0]["asia_complete"] = False
+        self.assertIn("plage en cours", self.run_node(b))
+
+    def test_script_has_no_forming_tag_for_a_complete_or_unknown_range(self):
+        b = sample()
+        b["day_plan"]["levels"][0]["asia_complete"] = True
+        self.assertNotIn("plage en cours", self.run_node(b))
+        del b["day_plan"]["levels"][0]["asia_complete"]
+        self.assertNotIn("plage en cours", self.run_node(b))
+        self.assertNotIn("plage en cours", self.run_node())   # the sample itself
+
+    def test_page_from_real_build_briefing_shows_the_calendar_reason(self):
+        b = briefing.build_briefing(
+            tb.UNIVERSE, tb.all_breakouts(), [], {},
+            tb.cal("unavailable", reason="this week: boom"), tb.TUE)
+        b["warnings"] = []   # the same text is also a warning: isolate the calendar block
+        out = self.run_node(b)
+        self.assertIn("this week: boom", out)
+        self.assertIn("indisponible", out)
 
     def test_script_survives_empty_parts(self):
         b = sample()

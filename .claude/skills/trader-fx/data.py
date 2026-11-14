@@ -3,6 +3,7 @@
 fetch_bars() never raises for a bad symbol: failures come back in the second
 element of the result, so one broken pair does not stop the briefing.
 """
+import http.client
 import json
 import math
 import os
@@ -80,7 +81,7 @@ def yahoo_get(path, http_get, sleep):
                 if body.strip().startswith("{"):
                     return body
                 raise DataError("Yahoo answered %s" % last)
-            except (urllib.error.URLError, OSError) as e:
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
                 last = str(getattr(e, "reason", e))
                 continue
         if attempt == 0 and saw_429:
@@ -178,9 +179,11 @@ def fetch_bars(symbols, interval, rng, *, cache_dir, ttl_s, use_cache=True,
                now=None, http_get=None, sleep=time.sleep, workers=1):
     """-> ({symbol: Series}, [{"symbol", "reason"}]), both in input order.
 
-    A fresh cache file (younger than ttl_s) is used without any request. After a
-    network failure a stale cache is still returned, with Series.age_s set to its
-    age. use_cache=False neither reads nor falls back to the cache.
+    A fresh cache file (younger than ttl_s and written on the same UTC day as `now`)
+    is used without any request. After a failure a stale or previous-day cache is
+    still returned, with Series.age_s set to its age. use_cache=False neither reads
+    nor falls back to the cache. Any unexpected exception of one symbol becomes a
+    failure of that symbol; it never propagates.
 
     workers=1 (default) is sequential: PAUSE seconds between two real requests.
     workers>1 fetches with that many threads; each task sleeps PAUSE before its own
@@ -189,24 +192,36 @@ def fetch_bars(symbols, interval, rng, *, cache_dir, ttl_s, use_cache=True,
     http_get = http_get or _http_get
     now = time.time() if now is None else now
 
-    def one(sym, pause):
-        """-> ("ok", Series) or ("fail", reason), and whether a request was made."""
+    def fresh(fetched_at):
+        # a partial daily bar cached yesterday must not pass for a complete one
+        return 0 <= now - fetched_at <= ttl_s and fetched_at // 86400 == now // 86400
+
+    def fetch_one(sym, pause):
         path = cache_path(cache_dir, sym, interval, rng) if cache_dir else None
         cached = read_cache(path) if (path and use_cache) else None
-        if cached and 0 <= now - cached[0] <= ttl_s:
+        if cached and fresh(cached[0]):
             return ("ok", cached[1]), False
         if pause:
             sleep(PAUSE)
         try:
             series = parse_chart(yahoo_get(chart_path(sym, interval, rng), http_get, sleep), sym)
-        except DataError as e:
+        except Exception as e:
             if cached:
                 cached[1].age_s = max(0.0, now - cached[0])
                 return ("ok", cached[1]), True
-            return ("fail", str(e)), True
+            if isinstance(e, DataError):
+                return ("fail", str(e)), True
+            raise
         if path:
             write_cache(path, now, series)
         return ("ok", series), True
+
+    def one(sym, pause):
+        """-> ("ok", Series) or ("fail", reason), and whether a request was made."""
+        try:
+            return fetch_one(sym, pause)
+        except Exception as e:
+            return ("fail", "unexpected error (%s: %s)" % (type(e).__name__, str(e)[:80])), True
 
     symbols = list(symbols)
     if workers > 1 and len(symbols) > 1:

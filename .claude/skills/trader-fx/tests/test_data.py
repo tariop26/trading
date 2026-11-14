@@ -1,4 +1,5 @@
 import _path  # noqa
+import http.client
 import io
 import json
 import os
@@ -7,6 +8,7 @@ import threading
 import time
 import unittest
 import urllib.error
+from datetime import datetime, timezone
 
 import data
 
@@ -29,8 +31,19 @@ NO_DATA = json.dumps({"chart": {"result": None, "error": {
     "code": "Not Found", "description": "No data found, symbol may be delisted"}}})
 
 
+_ERRORS = []
+
+
 def http_error(code):
-    return urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(b""))
+    e = urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(b""))
+    _ERRORS.append(e)  # closed in tearDownModule: no ResourceWarning
+    return e
+
+
+def tearDownModule():
+    for e in _ERRORS:
+        e.close()
+    _ERRORS.clear()
 
 
 class Net:
@@ -143,6 +156,7 @@ class FetchTests(unittest.TestCase):
 
     def test_4xx_with_json_body_is_parsed_as_no_data(self):
         err = urllib.error.HTTPError("http://x", 404, "nf", {}, io.BytesIO(NO_DATA.encode()))
+        self.addCleanup(err.close)
         got, failed = self.fetch(Net(err), symbols=("XXX=X",))
         self.assertEqual(got, {})
         self.assertEqual(failed[0]["symbol"], "XXX=X")
@@ -165,6 +179,19 @@ class FetchTests(unittest.TestCase):
         got, failed = self.fetch(net, symbols=("XXX=X", "EURUSD=X"))
         self.assertEqual(list(got), ["EURUSD=X"])
         self.assertEqual([f["symbol"] for f in failed], ["XXX=X"])
+
+    def test_incomplete_read_is_a_failed_symbol_not_a_crash(self):
+        net = Net(http.client.IncompleteRead(b"abc"))
+        got, failed = self.fetch(net)
+        self.assertEqual(got, {})
+        self.assertEqual([f["symbol"] for f in failed], ["EURUSD=X"])
+        self.assertIn("IncompleteRead", failed[0]["reason"])
+
+    def test_unexpected_exception_is_a_failed_symbol_not_a_crash(self):
+        got, failed = self.fetch(Net(RuntimeError("boom")))
+        self.assertEqual(got, {})
+        self.assertEqual([f["symbol"] for f in failed], ["EURUSD=X"])
+        self.assertIn("RuntimeError", failed[0]["reason"])
 
 
 class KeyedNet:
@@ -252,6 +279,51 @@ class WorkersTests(unittest.TestCase):
         self.assertTrue(all(s.age_s == 7200 for s in got.values()))
 
 
+class UnexpectedErrorTests(unittest.TestCase):
+    SYMS = ("A=X", "B=X", "C=X", "D=X")
+
+    def run_both(self, table):
+        for workers in (1, 3):
+            with self.subTest(workers=workers):
+                got, failed = data.fetch_bars(
+                    list(self.SYMS), "1d", "6mo", cache_dir=None, ttl_s=3600,
+                    http_get=KeyedNet(table), sleep=LockedSleeps(), now=100000.0,
+                    workers=workers)
+                yield got, failed
+
+    def test_incomplete_read_for_one_symbol(self):
+        table = {s: GOOD for s in self.SYMS}
+        table["B=X"] = http.client.IncompleteRead(b"ab")
+        for got, failed in self.run_both(table):
+            self.assertEqual(list(got), ["A=X", "C=X", "D=X"])
+            self.assertEqual([f["symbol"] for f in failed], ["B=X"])
+            self.assertIn("IncompleteRead", failed[0]["reason"])
+
+    def test_bad_status_line_for_one_symbol(self):
+        table = {s: GOOD for s in self.SYMS}
+        table["C=X"] = http.client.BadStatusLine("")
+        for got, failed in self.run_both(table):
+            self.assertEqual(list(got), ["A=X", "B=X", "D=X"])
+            self.assertEqual([f["symbol"] for f in failed], ["C=X"])
+
+    def test_runtime_error_for_one_symbol(self):
+        table = {s: GOOD for s in self.SYMS}
+        table["A=X"] = RuntimeError("boom")
+        for got, failed in self.run_both(table):
+            self.assertEqual(list(got), ["B=X", "C=X", "D=X"])
+            self.assertEqual([f["symbol"] for f in failed], ["A=X"])
+            self.assertIn("RuntimeError", failed[0]["reason"])
+
+    def test_unexpected_error_still_falls_back_to_stale_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_cache(d, 100000.0 - 7200, name="A_X_1d_6mo.json")
+            got, failed = data.fetch_bars(
+                ["A=X"], "1d", "6mo", cache_dir=d, ttl_s=3600,
+                http_get=Net(RuntimeError("boom")), sleep=Sleeps(), now=100000.0)
+        self.assertEqual(failed, [])
+        self.assertEqual(got["A=X"].age_s, 7200)
+
+
 class CacheTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -323,6 +395,40 @@ class CacheTests(unittest.TestCase):
         got, failed = self.fetch(Net(http_error(500)), use_cache=False)
         self.assertEqual(got, {})
         self.assertEqual(failed[0]["symbol"], "EURUSD=X")
+
+    def test_cache_from_previous_utc_day_is_expired_even_inside_ttl(self):
+        # written Thursday 19:00 UTC, read Friday 00:30 UTC: 5.5 h, inside the 6 h TTL
+        thu = datetime(2026, 11, 12, 19, 0, tzinfo=timezone.utc).timestamp()
+        fri = datetime(2026, 11, 13, 0, 30, tzinfo=timezone.utc).timestamp()
+        write_cache(self.d, thu)
+        net = Net(GOOD)
+        got, failed = data.fetch_bars(["EURUSD=X"], "1d", "6mo", cache_dir=self.d,
+                                      ttl_s=data.TTL_DAILY, http_get=net,
+                                      sleep=Sleeps(), now=fri)
+        self.assertEqual(len(net.urls), 1)
+        self.assertEqual(got["EURUSD=X"].gmtoffset, 3600)
+        self.assertIsNone(got["EURUSD=X"].age_s)
+
+    def test_cache_from_the_same_utc_day_is_still_a_hit(self):
+        thu = datetime(2026, 11, 12, 19, 0, tzinfo=timezone.utc).timestamp()
+        late = datetime(2026, 11, 12, 23, 0, tzinfo=timezone.utc).timestamp()
+        write_cache(self.d, thu)
+        net = Net(GOOD)
+        got, failed = data.fetch_bars(["EURUSD=X"], "1d", "6mo", cache_dir=self.d,
+                                      ttl_s=data.TTL_DAILY, http_get=net,
+                                      sleep=Sleeps(), now=late)
+        self.assertEqual(net.urls, [])
+        self.assertIsNone(got["EURUSD=X"].age_s)
+
+    def test_previous_day_cache_is_the_stale_fallback_with_age(self):
+        thu = datetime(2026, 11, 12, 19, 0, tzinfo=timezone.utc).timestamp()
+        fri = datetime(2026, 11, 13, 0, 30, tzinfo=timezone.utc).timestamp()
+        write_cache(self.d, thu)
+        got, failed = data.fetch_bars(["EURUSD=X"], "1d", "6mo", cache_dir=self.d,
+                                      ttl_s=data.TTL_DAILY, http_get=Net(http_error(500)),
+                                      sleep=Sleeps(), now=fri)
+        self.assertEqual(failed, [])
+        self.assertEqual(got["EURUSD=X"].age_s, fri - thu)
 
     def test_cache_filename_is_sanitised(self):
         data.fetch_bars(["^FCHI", "GC=F"], "1d", "6mo", cache_dir=self.d, ttl_s=60,

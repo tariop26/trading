@@ -55,7 +55,7 @@ aucun `briefing.json` n'est écrit.
 | `trader/lists/fx_pairs.txt`, `commodities.txt`, `indices.txt` | lus par `brief` : une ligne `SYMBOLE\|Nom` par symbole (symboles Yahoo : `EURUSD=X`, `GC=F`, `^GSPC`) |
 | `trader/fx/briefing.json` | écrit par `brief` : `as_of`, `market_state`, `counts`, `data_age`, `calendar`, `strength`, `swing`, `day_plan`, `warnings`, `disclaimer` |
 | `trader/fx/briefing.html` | écrit par `page` : page autonome, données intégrées, aucun appel réseau |
-| `trader/fx/cache/` | cache disque des barres Yahoo : 6 h pour les barres journalières, 10 min pour les barres 1 h. Ignoré par git |
+| `trader/fx/cache/` | cache disque des barres Yahoo : 6 h pour les barres journalières (jamais réutilisé d'un jour UTC à l'autre), 10 min pour les barres 1 h. Ignoré par git |
 
 `briefing.json` et `briefing.html` sont des sorties du jour, ignorées par git.
 
@@ -70,8 +70,10 @@ aucun `briefing.json` n'est écrit.
 - Un briefing complet à froid prend environ 30 secondes (mesuré à 31 s le
   2026-11-14 pour 104 symboles, avec 3 requêtes en parallèle ; environ 85 s en
   séquentiel). Avec le cache, un second passage est quasi immédiat.
-- Résultat partiel dit partiel : « Reçus : N sur M (k en échec) », avec la liste des
-  échecs et leur raison. Un symbole avec moins de 30 séances complètes est
+- Résultat partiel dit partiel : « Reçus : N sur M (k en échec) ». Le résumé et la
+  page listent les symboles en échec ; les raisons sont dans `briefing.json`
+  (`counts.failed[].reason`), et un avertissement le dit quand des données sont
+  périmées ou en échec. Un symbole avec moins de 30 séances complètes est
   exclu de l'analyse et compté à part.
 - Le calendrier vient d'un flux public non officiel (`nfs.faireconomy.media`).
   Il peut changer ou disparaître. Dans ce cas le briefing indique
@@ -95,7 +97,8 @@ aucun `briefing.json` n'est écrit.
 | plan du jour | sessions Tokyo, Londres, New York ; niveaux par symbole : plus haut et plus bas de la veille, de la semaine précédente, de 20 jours, plage de la session asiatique (00:00 à 07:00 UTC) et plus haut/bas du jour |
 | avertissements | marché fermé, symboles exclus, calendrier partiel, cache périmé utilisé après un échec (âge affiché) |
 
-Le résumé terminal tient en 40 lignes au plus. La page web a six sections :
+Le résumé terminal tient en 40 lignes au plus ; il dit toujours la date de la
+dernière barre (« Dernière barre : AAAA-MM-JJ »), pas seulement le week-end. La page web a six sections :
 Résumé, Force des devises, Calendrier, Setups swing, Plan du jour,
 Avertissements. Thème clair et sombre, largeur mobile.
 
@@ -133,7 +136,7 @@ Avertissements. Thème clair et sombre, largeur mobile.
   l'heure des données (dernière barre).
 - Dire « a matché une règle », jamais « achat », « vente », « gagnant » ni
   « bon trade ».
-- Aucun chiffre de gain ou de perte, aucun rendement, aucun profit.
+- Aucun chiffre de gain ou de perte sur un trade, aucun profit.
 - Les données Yahoo sont retardées : ne jamais les présenter comme du temps
   réel. Un setup est périmé dès que le prix a bougé : relancer avant d'en parler.
 - Un week-end, les valeurs sont les dernières clôtures, et la plage de la
@@ -150,6 +153,24 @@ Avertissements. Thème clair et sombre, largeur mobile.
   sur les paires.
 - Flux de calendrier non officiel, Yahoo non officiel : l'un ou l'autre peut
   changer de format ou disparaître.
+- Les barres historiques sont datées avec le décalage UTC actuel de la série :
+  les niveaux de la semaine précédente peuvent être faux la semaine qui suit le
+  changement d'heure d'automne (forex et contrats à terme).
+- Entre le vendredi 17:00 à New York et le samedi 00:00 UTC, l'état du marché est
+  `closed_weekend`, mais la barre forex du vendredi est encore traitée comme en
+  cours.
+- Les indices asiatiques (Nikkei, Hang Seng) ont une séance de retard le matin
+  en Europe.
+- Les jours fériés (Noël, Nouvel An) s'affichent « ouvert » : seul le week-end
+  est modélisé.
+- Une seule série périmée n'est pas signalée : regarder la `last_bar_date` de
+  chaque signal.
+- Les lignes de niveaux du plan du jour n'ont pas de date de dernière barre.
+- Tous les chemins sont relatifs au répertoire courant : lancer les commandes
+  depuis la racine du dépôt, `C:/Users/m.poirat/TRADING`.
+- Le téléchargement à 3 tâches fait trois requêtes Yahoo simultanées : mettre
+  `WORKERS = 1` dans `fx.py` si une erreur HTTP 429 apparaît (les nouvelles
+  tentatives après un 429 sont silencieuses).
 
 ## Ce qu'il ne fait jamais
 

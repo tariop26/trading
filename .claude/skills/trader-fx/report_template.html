@@ -359,7 +359,7 @@
     var grid = h("div", "strength");
     panels.forEach(function (p) { grid.append(p); });
     box.replaceChildren(grid, h("p", "note",
-      "Rendement logarithmique moyen, en %, sur les paires forex de chaque devise (USD, EUR, GBP, JPY, CHF, AUD, NZD, CAD). " +
+      "Variation logarithmique moyenne, en %, sur les paires forex de chaque devise (USD, EUR, GBP, JPY, CHF, AUD, NZD, CAD). " +
       "Barres vers la droite : devise plus forte que la moyenne ; vers la gauche : plus faible. Chaque colonne a sa propre échelle."));
     box.style.display = "flex";
     box.style.flexDirection = "column";
@@ -468,6 +468,15 @@
 
     if (levels.length) {
       var lv = function (k) { return function (r) { return price(r[k]); }; };
+      var asia = function (k) {
+        return function (r) {
+          // the Asia range is final only from 07:00 UTC
+          if (r.asia_complete === false && typeof r[k] === "number") {
+            return h("span", "", price(r[k]), " ", h("span", "tag", "plage en cours"));
+          }
+          return price(r[k]);
+        };
+      };
       out.push(h("div", "sub", h("h3", "", "Niveaux à surveiller"), table([
         { label: "Symbole", cell: function (r) { return text(r.symbol); } },
         { label: "Nom", cell: function (r) { return text(r.name); } },
@@ -477,8 +486,8 @@
         { label: "Bas semaine préc.", cell: lv("week_low"), cls: "num r" },
         { label: "Haut 20 séances", cell: lv("high20"), cls: "num r" },
         { label: "Bas 20 séances", cell: lv("low20"), cls: "num r" },
-        { label: "Asie haut", cell: lv("asia_high"), cls: "num r" },
-        { label: "Asie bas", cell: lv("asia_low"), cls: "num r" },
+        { label: "Asie haut", cell: asia("asia_high"), cls: "num r" },
+        { label: "Asie bas", cell: asia("asia_low"), cls: "num r" },
         { label: "Haut jour", cell: lv("day_high"), cls: "num r" },
         { label: "Bas jour", cell: lv("day_low"), cls: "num r" }
       ], levels), h("p", "note",

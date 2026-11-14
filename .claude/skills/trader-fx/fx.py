@@ -80,8 +80,8 @@ def cmd_brief(args, deps):
     for path in args.lists or DEFAULT_LISTS:
         try:
             items = briefing.read_list(path)
-        except OSError as e:
-            return _fail("Liste illisible : %s (%s)." % (path, e.strerror or e))
+        except (OSError, ValueError) as e:  # ValueError: UnicodeDecodeError
+            return _fail("Liste illisible : %s (%s)." % (path, getattr(e, "strerror", None) or e))
         for sym, name in items:
             if sym not in seen:
                 seen.add(sym)

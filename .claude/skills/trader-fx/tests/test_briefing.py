@@ -75,6 +75,16 @@ class TestReadList(unittest.TestCase):
                              [("EURUSD=X", "EUR/USD"), ("GC=F", "GC=F"), ("^FCHI", "CAC 40")])
 
 
+    def test_read_list_ignores_a_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "l.txt")
+            with open(p, "w", encoding="utf-8-sig") as f:
+                f.write("EURUSD=X|EUR/USD\nGC=F|Or\n")
+            with open(p, "rb") as f:
+                self.assertTrue(f.read().startswith(b"\xef\xbb\xbf"))
+            self.assertEqual(briefing.read_list(p), [("EURUSD=X", "EUR/USD"), ("GC=F", "Or")])
+
+
 class TestBuild(unittest.TestCase):
     def test_build_briefing_has_all_spec_keys(self):
         b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {}, cal(), TUE)
@@ -88,8 +98,18 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(set(b["strength"]["windows"]), {"1d", "5d", "20d"})
         self.assertEqual(set(b["swing"]), {"hits", "clusters"})
         self.assertEqual(set(b["day_plan"]), {"sessions", "levels", "events_24h"})
-        self.assertEqual(set(b["calendar"]), {"status", "events"})
+        self.assertEqual(set(b["calendar"]), {"status", "events", "reason"})
         json.dumps(b)  # serialisable
+
+    def test_calendar_carries_its_reason(self):
+        b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {},
+                                    cal("unavailable", reason="this week: boom"), TUE)
+        self.assertEqual(b["calendar"]["reason"], "this week: boom")
+        b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {}, cal(), TUE)
+        self.assertIsNone(b["calendar"]["reason"])
+        b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {},
+                                    {"status": "ok", "events": []}, TUE)
+        self.assertIsNone(b["calendar"]["reason"])
 
     def test_hits_are_only_symbols_with_setups(self):
         daily = {"EURUSD=X": series(breakout()), "GBPUSD=X": series(flat()),
@@ -108,11 +128,32 @@ class TestBuild(unittest.TestCase):
         failed = [{"symbol": "USDJPY=X", "reason": "no data"}]
         b = briefing.build_briefing(UNIVERSE, daily, failed, {}, cal(), TUE)
         self.assertEqual(b["counts"], {"requested": 4, "fetched": 3, "scanned": 3,
-                                       "failed": failed})
+                                       "failed": failed, "last_bar_date": "2026-11-09"})
         s = briefing.render_summary(b)
         self.assertIn("Reçus : 3 sur 4 (1 en échec)", s)
         self.assertIn("USDJPY=X", s)
         self.assertTrue(any("USDJPY=X" in w for w in b["warnings"]))
+
+    def test_arithmetic_error_excludes_only_that_symbol(self):
+        daily = all_breakouts()
+        daily["GBPUSD=X"] = series(flat(54) + [0.0])   # last close 0: division by zero
+        b = briefing.build_briefing(UNIVERSE, daily, [], {}, cal(), TUE)
+        self.assertEqual(b["counts"]["scanned"], 3)
+        self.assertEqual(b["counts"]["fetched"], 4)
+        self.assertNotIn("GBPUSD=X", [h["symbol"] for h in b["swing"]["hits"]])
+        self.assertIn("GBPUSD=X : analyse impossible (ZeroDivisionError)", b["warnings"])
+        # not mislabelled as "fewer than 30 sessions"
+        self.assertFalse(any("30 séances" in w and "GBPUSD=X" in w for w in b["warnings"]))
+        self.assertIn("Analysés : 3 (moins de 30 séances : 1)", briefing.render_summary(b))
+
+    def test_analyze_universe_reports_errors_when_asked(self):
+        daily = {"EURUSD=X": series(breakout()), "GBPUSD=X": series(flat(54) + [0.0])}
+        errors = []
+        out = briefing.analyze_universe(UNIVERSE[:2], daily, TUE, errors)
+        self.assertEqual([a["symbol"] for a in out], ["EURUSD=X"])
+        self.assertEqual(errors, [("GBPUSD=X", "ZeroDivisionError")])
+        # without the errors list it just skips the symbol
+        self.assertEqual(len(briefing.analyze_universe(UNIVERSE[:2], daily, TUE)), 1)
 
     def test_under_30_sessions_counted_not_scanned(self):
         daily = all_breakouts()
@@ -209,6 +250,20 @@ class TestBuild(unittest.TestCase):
         self.assertIsNotNone(lv["EURUSD=X"]["asia_high"])
         self.assertIsNone(lv["GC=F"]["asia_high"])
         self.assertIsNone(lv["NZDUSD=X"]["asia_low"])
+        self.assertIs(lv["EURUSD=X"]["asia_complete"], True)   # TUE is 15:00 UTC
+        self.assertIsNone(lv["GC=F"]["asia_complete"])
+        self.assertIsNone(lv["NZDUSD=X"]["asia_complete"])
+
+    def test_day_plan_asia_complete_false_while_the_range_forms(self):
+        daily = {"EURUSD=X": series(breakout())}
+        t0 = int(datetime(2026, 11, 10, tzinfo=timezone.utc).timestamp())
+        hourly = {"EURUSD=X": data.Series(
+            bars=[(t0 + h * 3600, 1.0, 1.01, 0.99, 1.0) for h in range(10)], gmtoffset=0)}
+        early = datetime(2026, 11, 10, 3, 0, tzinfo=timezone.utc)
+        b = briefing.build_briefing([("EURUSD=X", "EUR/USD")], daily, [], hourly, cal(), early)
+        row = b["day_plan"]["levels"][0]
+        self.assertIsNotNone(row["asia_high"])
+        self.assertIs(row["asia_complete"], False)
 
     def test_strength_uses_forex_pairs_only(self):
         daily = all_breakouts()
@@ -248,7 +303,24 @@ class TestSummary(unittest.TestCase):
         self.assertLessEqual(len(s.splitlines()), 40)
         self.assertNotRegex(s, self.FORBIDDEN)
         self.assertIn("ont matché une règle", s)
+        self.assertIn("Dernière barre : 2026-11-09", s)
         self.assertIn(DISCLAIMER, s)
+
+    def test_summary_always_prints_the_last_bar_date(self):
+        daily = {"EURUSD=X": series(breakout(), end=date(2026, 11, 6)),
+                 "GBPUSD=X": series(flat(), end=date(2026, 11, 9)),
+                 "AUDUSD=X": series(flat(), end=date(2026, 11, 5)),
+                 "USDJPY=X": series(flat(), end=date(2026, 11, 9))}
+        b = briefing.build_briefing(UNIVERSE, daily, [], {}, cal(), TUE)   # a Tuesday
+        self.assertEqual(b["market_state"], "open")
+        lines = briefing.render_summary(b).splitlines()
+        self.assertEqual([l for l in lines if l.startswith("Dernière barre")],
+                         ["Dernière barre : 2026-11-09"])
+
+    def test_summary_last_bar_line_when_nothing_is_analysed(self):
+        b = briefing.build_briefing(UNIVERSE[:1], {"EURUSD=X": series(flat(20))}, [], {},
+                                    cal(), TUE)
+        self.assertIn("Dernière barre : n/a", briefing.render_summary(b))
 
     def test_summary_small_case_content(self):
         daily = {"EURUSD=X": series(breakout()), "GBPUSD=X": series(flat()),
@@ -426,6 +498,18 @@ class TestMain(unittest.TestCase):
                                "--out", self.out], rec.deps())
         self.assertEqual(code, 1)
         self.assertEqual(len(text.strip().splitlines()), 1)
+
+    def test_list_in_cp1252_returns_1_with_one_line(self):
+        bad = os.path.join(self.tmp.name, "cp.txt")
+        with open(bad, "wb") as f:
+            f.write("EURUSD=X|Euro étalon\n".encode("cp1252"))
+        rec = Recorder(all_breakouts())
+        code, text = run_main(["brief", "--list", bad, "--out", self.out], rec.deps())
+        self.assertEqual(code, 1)
+        self.assertEqual(len(text.strip().splitlines()), 1)
+        self.assertIn("Liste illisible", text)
+        self.assertNotIn("Traceback", text)
+        self.assertEqual(rec.calls, [])
 
     def test_bad_now_returns_1(self):
         rec = Recorder(all_breakouts())

@@ -51,9 +51,9 @@ Flux : Python collecte et calcule, écrit `briefing.json`, affiche le résumé ;
 ### 5.1 data.py
 
 - Source : Yahoo, endpoint `v8/finance/chart` (il fournit open, high, low, close ; le endpoint spark n'a que les clôtures et ne suffit pas pour l'ATR et les niveaux). Un appel par symbole, pause de 0,3 s, query2 puis query1 sur 429 ou 5xx, une nouvelle tentative après 5 s sur 429, comme `scan.py`.
-- `fetch_bars(symbols, interval, range) -> (bars, failed)` où `bars[symbol]` est une liste ordonnée de `(timestamp_utc, open, high, low, close)` et `failed` la liste des symboles sans données avec la raison.
+- `fetch_bars(symbols, interval, range) -> (bars, failed)` où `bars[symbol]` est une liste ordonnée de `(timestamp_utc, open, high, low, close)` et `failed` la liste des symboles sans données avec la raison. Paramètre optionnel `workers` (1 par défaut, sans parallélisme ; `fx.py` utilise 3) : la pause de 0,3 s est alors prise avant chaque requête réelle, par requête. Toute exception inattendue d'un symbole devient un échec de ce symbole (jamais une interruption du briefing).
 - Deux profils : journalier (plage `6mo`, environ 125 séances) pour tous les symboles ; 1 h sur 5 jours uniquement pour les paires en alerte et les majors. Pas de barres 5 min : aucune sortie du briefing n'en a besoin.
-- Cache sur disque dans `trader/fx/cache/`, une entrée par (symbole, intervalle, plage). Durées de validité : 6 h pour le journalier, 10 min pour l'intraday. `--no-cache` l'ignore. Une entrée périmée utilisée après un échec réseau est marquée avec son âge.
+- Cache sur disque dans `trader/fx/cache/`, une entrée par (symbole, intervalle, plage). Durées de validité : 6 h pour le journalier, 10 min pour l'intraday. `--no-cache` l'ignore. Une entrée est aussi périmée quand la date UTC de son écriture n'est pas celle de l'instant courant, pour tous les profils (une barre journalière partielle mise en cache la veille ne doit pas passer pour complète). Une entrée périmée utilisée après un échec est marquée avec son âge.
 - Les barres à valeurs nulles sont supprimées.
 
 ### 5.2 signals.py
@@ -65,7 +65,7 @@ Par symbole, calculé sur le journalier :
 - Tendance : `up` si clôture au-dessus de la moyenne 50 jours et moyenne 20 au-dessus de la 50, `down` dans le cas inverse, `mixed` sinon.
 - Niveaux : haut et bas de la veille, haut et bas de la semaine précédente (semaine calendaire), haut et bas des 20 dernières séances.
 
-Pour les paires en alerte et les majors, à partir des barres 1 h : plage de la session asiatique du jour (00:00 à 07:00 UTC) et plus haut / plus bas depuis 00:00 UTC.
+Pour les paires en alerte et les majors, à partir des barres 1 h : plage de la session asiatique du jour (00:00 à 07:00 UTC) et plus haut / plus bas depuis 00:00 UTC. La plage porte `asia_complete` (vrai à partir de 07:00 UTC) : avant, elle est encore en formation et la page l'indique.
 
 Les règles s'écrivent « a matché une règle », jamais « achat ».
 
@@ -99,21 +99,21 @@ Sessions sur la convention du forex, avec heure d'été gérée par `zoneinfo` :
 ```
 as_of            horodatage ISO, avec heures Paris et New York
 market_state     "open" | "closed_weekend"
-counts           {requested, fetched, scanned, failed:[{symbol, reason}]}
+counts           {requested, fetched, scanned, failed:[{symbol, reason}], last_bar_date}
 data_age         âge du plus ancien cache utilisé, ou null
-calendar         {status, events:[{time_paris, time_ny, currency, title, impact, forecast, previous}]}
+calendar         {status, reason, events:[{time_paris, time_ny, currency, title, impact, forecast, previous}]}
 strength         {windows:{"1d":[{ccy, score}], "5d":[...], "20d":[...]}}
 swing            {hits:[{symbol, name, last, rsi, atr_pct, trend, setups:[...]}],
                   clusters:[{ccy, count, of}]}
 day_plan         {sessions:[...], levels:[{symbol, prev_high, prev_low, week_high, week_low,
-                  asia_high, asia_low}], events_24h:[...]}
+                  asia_high, asia_low, asia_complete}], events_24h:[...]}
 warnings         [texte]
 disclaimer       "Liste de graphiques qui ont matché une règle. Pas un conseil. Données Yahoo, retardées."
 ```
 
 #### Résumé terminal
 
-Ordre : état du marché et heure, comptes (demandés, reçus, analysés, échecs), force des devises (meilleure et pire sur 5 jours), annonces à fort impact des prochaines 24 h, hits swing regroupés par famille (forex, matières premières, indices) avec le message de corrélation, avertissements.
+Ordre : état du marché et heure, comptes (demandés, reçus, analysés, échecs), ligne « Dernière barre : AAAA-MM-JJ » (toujours affichée), force des devises (meilleure et pire sur 5 jours), annonces à fort impact des prochaines 24 h, hits swing regroupés par famille (forex, matières premières, indices) avec le message de corrélation, avertissements.
 
 #### Page web
 

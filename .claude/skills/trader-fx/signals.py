@@ -140,7 +140,8 @@ def levels(daily, today=None):
 def asia_range(hourly, now_utc):
     """Asia session of the UTC day of now_utc: 1h bars from 00:00 up to (not
     including) 07:00 UTC, plus the day's high/low since 00:00 UTC. Bars after now
-    are ignored. None when there is no Asia bar yet today."""
+    are ignored. asia_complete is False before 07:00 UTC. None when there is no
+    Asia bar yet today."""
     now = now_utc.astimezone(timezone.utc)
     start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
     t0 = int(start.timestamp())
@@ -155,6 +156,8 @@ def asia_range(hourly, now_utc):
         "asia_low": min(b[3] for b in asia),
         "day_high": max(b[2] for b in day),
         "day_low": min(b[3] for b in day),
+        # False while 00:00-07:00 UTC is still forming: the range can still widen
+        "asia_complete": now >= start + timedelta(hours=ASIA_END_H),
     }
 
 

@@ -237,6 +237,14 @@ class TestAsiaRange(unittest.TestCase):
         self.assertAlmostEqual(r["day_high"], 1.50)
         self.assertAlmostEqual(r["day_low"], 0.90)
 
+    def test_asia_range_flags_a_range_still_forming(self):
+        self.assertFalse(signals.asia_range(self.hourly(), utc(2026, 11, 13, 3))["asia_complete"])
+        self.assertFalse(signals.asia_range(self.hourly(), utc(2026, 11, 13, 6, 59))["asia_complete"])
+
+    def test_asia_range_is_complete_from_07_utc(self):
+        self.assertTrue(signals.asia_range(self.hourly(), utc(2026, 11, 13, 7))["asia_complete"])
+        self.assertTrue(signals.asia_range(self.hourly(), utc(2026, 11, 13, 8))["asia_complete"])
+
     def test_asia_range_none_without_bars_today(self):
         s = data.Series(bars=[(ts(2026, 11, 12, 3), 1, 2, 0.5, 1)], gmtoffset=0)
         self.assertIsNone(signals.asia_range(s, utc(2026, 11, 13, 9)))

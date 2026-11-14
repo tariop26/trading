@@ -32,7 +32,7 @@ def read_list(path):
     """Lines 'SYMBOL|name' -> [(symbol, name)]. '#' comments and blank lines are
     skipped; the name is optional (the symbol is used when it is missing)."""
     out = []
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -53,13 +53,19 @@ def alert_symbols(hits):
     return out
 
 
-def analyze_universe(universe, daily, now_utc):
+def analyze_universe(universe, daily, now_utc, errors=None):
     """[analysis] for every symbol of `universe` that has at least 30 complete
-    sessions, in universe order."""
+    sessions, in universe order. A symbol whose maths fail (a zero close, say) is
+    skipped; when `errors` is a list, (symbol, error type name) is appended to it."""
     out = []
     for sym, name in universe:
         if sym in daily:
-            a = signals.analyze(sym, name, daily[sym], now_utc)
+            try:
+                a = signals.analyze(sym, name, daily[sym], now_utc)
+            except ArithmeticError as e:
+                if errors is not None:
+                    errors.append((sym, type(e).__name__))
+                continue
             if a is not None:
                 out.append(a)
     return out
@@ -96,22 +102,27 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
         raise ValueError("now_utc must be timezone-aware")
     now_utc = now_utc.astimezone(timezone.utc)
     state = sessions.market_state(now_utc)
-    analyses = analyze_universe(universe, daily, now_utc)
+    errors = []
+    analyses = analyze_universe(universe, daily, now_utc, errors)
     by_symbol = {a["symbol"]: a for a in analyses}
     hits = [_hit(a) for a in analyses if a["setups"]]
+    last_bar = max((a["last_bar_date"] for a in analyses), default=None)
     warnings = []
 
     if state == "closed_weekend":
-        last = max((a["last_bar_date"] for a in analyses), default=None)
+        last = last_bar
         warnings.append(
             "Marché fermé (week-end) : les données sont les dernières clôtures%s."
             % (" (dernière barre : %s)" % last if last else ""))
     if failed:
         warnings.append("Sans données : %d symbole(s) en échec (%s)."
                         % (len(failed), join_names([f["symbol"] for f in failed])))
-    short = [s for s, _ in universe if s in daily and s not in by_symbol]
+    broken = {sym for sym, _ in errors}
+    short = [s for s, _ in universe if s in daily and s not in by_symbol and s not in broken]
     if short:
         warnings.append("Moins de 30 séances complètes, non analysés : %s." % join_names(short))
+    for sym, kind in errors:
+        warnings.append("%s : analyse impossible (%s)" % (sym, kind))
 
     # data age: the oldest cache that was used after a network failure
     ages = [s.age_s for s in list(daily.values()) + list(hourly.values())
@@ -156,6 +167,7 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
         asia = signals.asia_range(hourly[sym], now_utc) if sym in hourly else None
         for k in ("asia_high", "asia_low", "day_high", "day_low"):
             row[k] = asia[k] if asia else None
+        row["asia_complete"] = asia["asia_complete"] if asia else None
         levels.append(row)
 
     paris = now_utc.astimezone(sessions.PARIS)
@@ -166,9 +178,10 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
                   "new_york": ny.strftime("%Y-%m-%d %H:%M")},
         "market_state": state,
         "counts": {"requested": len(universe), "fetched": len(daily),
-                   "scanned": len(analyses), "failed": list(failed)},
+                   "scanned": len(analyses), "failed": list(failed),
+                   "last_bar_date": last_bar},
         "data_age": data_age,
-        "calendar": {"status": status, "events": events},
+        "calendar": {"status": status, "events": events, "reason": reason or None},
         "strength": {"windows": windows},
         "swing": {"hits": hits, "clusters": strength.clusters(hits)},
         "day_plan": {"sessions": table, "levels": levels, "events_24h": events_24h},
@@ -277,6 +290,7 @@ def render_summary(b):
         "Marché : " + ("fermé (week-end), dernières clôtures" if closed else "ouvert"),
         "Reçus : %d sur %d (%d en échec)" % (c["fetched"], c["requested"], len(c["failed"])),
         "Analysés : %d (moins de 30 séances : %d)" % (c["scanned"], c["fetched"] - c["scanned"]),
+        "Dernière barre : %s" % (c.get("last_bar_date") or "n/a"),
     ]
     if c["failed"]:
         head.append(_cut("Échecs : " + join_names([f["symbol"] for f in c["failed"]])))

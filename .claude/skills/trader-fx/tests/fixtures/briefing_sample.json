@@ -295,7 +295,8 @@
         "asia_high": 1.0743,
         "asia_low": 1.068,
         "day_high": 1.0758,
-        "day_low": 1.068
+        "day_low": 1.068,
+        "asia_complete": true
       },
       {
         "symbol": "GBPUSD=X",
@@ -309,7 +310,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       },
       {
         "symbol": "AUDUSD=X",
@@ -323,7 +325,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       },
       {
         "symbol": "USDCAD=X",
@@ -337,7 +340,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       },
       {
         "symbol": "NZDUSD=X",
@@ -351,7 +355,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       },
       {
         "symbol": "GC=F",
@@ -365,7 +370,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       },
       {
         "symbol": "USDJPY=X",
@@ -379,7 +385,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       },
       {
         "symbol": "USDCHF=X",
@@ -393,7 +400,8 @@
         "asia_high": null,
         "asia_low": null,
         "day_high": null,
-        "day_low": null
+        "day_low": null,
+        "asia_complete": null
       }
     ],
     "events_24h": [

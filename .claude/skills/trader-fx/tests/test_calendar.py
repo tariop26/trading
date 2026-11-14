@@ -19,8 +19,19 @@ def raw(title="CPI m/m", country="USD", date="2026-11-10T08:30:00-05:00",
     return d
 
 
+_ERRORS = []
+
+
 def http_error(code):
-    return urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(b""))
+    e = urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(b""))
+    _ERRORS.append(e)  # closed in tearDownModule: no ResourceWarning
+    return e
+
+
+def tearDownModule():
+    for e in _ERRORS:
+        e.close()
+    _ERRORS.clear()
 
 
 class Net:
