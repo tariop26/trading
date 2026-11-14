@@ -1,0 +1,543 @@
+<title>Briefing Marchés</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: one narrow column of sections, the header carries the as-of time so a stale
+     page is recognisable; wide tables scroll inside their own container. */
+  :root {
+    --bg: #f2f5f9;
+    --surface: #ffffff;
+    --ink: #14202e;
+    --muted: #566577;
+    --line: #d7dee7;
+    --accent: #0b5fa5;
+    --pos: #0e7c86;
+    --neg: #c2570c;
+    --warn-bg: #fff3dc;
+    --warn-ink: #6f4300;
+    --warn-line: #e3b45c;
+    --stale-bg: #fde8e4;
+    --stale-ink: #8a1f11;
+    --font-text: ui-sans-serif, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --font-num: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d141c;
+      --surface: #141d28;
+      --ink: #e6edf5;
+      --muted: #94a4b6;
+      --line: #27333f;
+      --accent: #6db3f2;
+      --pos: #45c3cb;
+      --neg: #f0954a;
+      --warn-bg: #2b2113;
+      --warn-ink: #f1cf90;
+      --warn-line: #6b5126;
+      --stale-bg: #3a1c17;
+      --stale-ink: #f3b5aa;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d141c;
+    --surface: #141d28;
+    --ink: #e6edf5;
+    --muted: #94a4b6;
+    --line: #27333f;
+    --accent: #6db3f2;
+    --pos: #45c3cb;
+    --neg: #f0954a;
+    --warn-bg: #2b2113;
+    --warn-ink: #f1cf90;
+    --warn-line: #6b5126;
+    --stale-bg: #3a1c17;
+    --stale-ink: #f3b5aa;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-text);
+    font-size: 15px;
+    line-height: 1.5;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 40px;
+  }
+  main { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px; }
+  h1, h2, h3 { margin: 0; line-height: 1.2; text-wrap: balance; }
+  h1 { font-size: 1.625rem; letter-spacing: -0.01em; }
+  h2 { font-size: 1.125rem; }
+  h3 { font-size: 0.8125rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  p { margin: 0; }
+  .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header { display: flex; flex-direction: column; gap: 12px; }
+  .asof { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
+  .asof .t { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 1.0625rem; font-weight: 600; }
+  .asof .city { color: var(--muted); font-size: 0.8125rem; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 6px; }
+  .age { font-size: 0.875rem; color: var(--muted); }
+  .banner { padding: 10px 12px; border-radius: 6px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; }
+  .banner.stale { background: var(--stale-bg); color: var(--stale-ink); border-color: var(--stale-ink); }
+  .banners { display: flex; flex-direction: column; gap: 8px; }
+  .banners:empty { display: none; }
+
+  section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .sub { display: flex; flex-direction: column; gap: 8px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 16px 20px; margin: 0; }
+  .stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .stat dt { font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .stat dd { margin: 0; font-size: 1.0625rem; font-weight: 600; overflow-wrap: anywhere; }
+  .note { font-size: 0.875rem; color: var(--muted); overflow-wrap: anywhere; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.75rem; font-weight: 600; white-space: nowrap; background: var(--surface); }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill.ok::before, .pill.on::before { background: var(--pos); }
+  .pill.warn::before { background: var(--neg); }
+
+  .strength { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .bars { display: flex; flex-direction: column; gap: 6px; }
+  .bar-row { display: grid; grid-template-columns: 2.6rem 1fr 4.6rem; align-items: center; gap: 8px; }
+  .bar-row .ccy { font-weight: 600; font-size: 0.875rem; }
+  .bar-row .val { text-align: right; font-size: 0.8125rem; }
+  .track { position: relative; height: 14px; }
+  .track::before { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted); opacity: 0.55; }
+  .fill { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; }
+  .fill.pos { left: 50%; background: var(--pos); }
+  .fill.neg { right: 50%; background: var(--neg); }
+
+  .scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+  th, td { padding: 8px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.75rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.r, th.r { text-align: right; }
+  td.wrap { white-space: normal; min-width: 12rem; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { border: 1px solid var(--accent); color: var(--accent); border-radius: 4px; padding: 0 6px; font-size: 0.75rem; white-space: nowrap; }
+  .empty { padding: 12px; color: var(--muted); font-size: 0.9375rem; }
+
+  ul.warnings { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  ul.warnings li { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; overflow-wrap: anywhere; }
+  footer { border-top: 1px solid var(--line); padding-top: 16px; font-size: 0.875rem; color: var(--muted); }
+  footer strong { color: var(--ink); }
+</style>
+
+<main>
+  <header>
+    <h1>Briefing Marchés</h1>
+    <div class="asof" id="asof"></div>
+    <div class="banners" id="banners"></div>
+  </header>
+
+  <section id="s-resume" aria-labelledby="h-resume">
+    <h2 id="h-resume">Résumé</h2>
+    <div id="resume"></div>
+  </section>
+
+  <section id="s-force" aria-labelledby="h-force">
+    <h2 id="h-force">Force des devises</h2>
+    <div id="force"></div>
+  </section>
+
+  <section id="s-cal" aria-labelledby="h-cal">
+    <h2 id="h-cal">Calendrier</h2>
+    <div id="calendar"></div>
+  </section>
+
+  <section id="s-swing" aria-labelledby="h-swing">
+    <h2 id="h-swing">Setups swing</h2>
+    <div id="swing"></div>
+  </section>
+
+  <section id="s-plan" aria-labelledby="h-plan">
+    <h2 id="h-plan">Plan du jour</h2>
+    <div id="plan"></div>
+  </section>
+
+  <section id="s-warn" aria-labelledby="h-warn">
+    <h2 id="h-warn">Avertissements</h2>
+    <div id="warnings"></div>
+  </section>
+
+  <footer>
+    <p id="disclaimer"><strong>Liste de graphiques qui ont matché une règle. Pas un conseil. Données Yahoo, retardées.</strong></p>
+  </footer>
+</main>
+
+<!--BRIEFING_JSON-->
+
+<script>
+(function () {
+  "use strict";
+
+  var SETUP_LABELS = {
+    breakout_20d: "Cassure du plus haut 20 j",
+    bull_flag: "Drapeau haussier",
+    reclaim_ma20: "Reprise de la moyenne 20 j",
+    oversold: "Survente",
+    oversold_bounce: "Rebond depuis la survente"
+  };
+  var TREND_LABELS = { up: "haussière", down: "baissière", mixed: "mixte" };
+  var FAMILIES = [["forex", "Forex"], ["commodities", "Matières premières"], ["indices", "Indices"]];
+  var STALE_HOURS = 12;
+
+  function $(id) { return document.getElementById(id); }
+
+  function h(tag, cls) {
+    var el = document.createElement(tag);
+    if (cls) { el.className = cls; }
+    for (var i = 2; i < arguments.length; i++) {
+      var c = arguments[i];
+      if (c === null || c === undefined || c === false) { continue; }
+      el.append(c);
+    }
+    return el;
+  }
+
+  function has(v) { return v !== null && v !== undefined && v !== "" && !(typeof v === "number" && !isFinite(v)); }
+  function text(v) { return has(v) ? String(v) : "n/a"; }
+  function list(v) { return Array.isArray(v) ? v : []; }
+  function obj(v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; }
+  function fixed(v, d) { return typeof v === "number" && isFinite(v) ? v.toFixed(d) : "n/a"; }
+  function signed(v, d) {
+    if (typeof v !== "number" || !isFinite(v)) { return "n/a"; }
+    return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d);
+  }
+  function price(v) {
+    if (typeof v !== "number" || !isFinite(v)) { return "n/a"; }
+    var a = Math.abs(v);
+    return v.toFixed(a >= 100 ? 2 : a >= 10 ? 3 : 5);
+  }
+  function plural(n, one, many) { return n + " " + (n > 1 ? many : one); }
+
+  function family(symbol) {
+    if (/^[A-Z]{6}=X$/.test(symbol || "")) { return "forex"; }
+    if (/=F$/.test(symbol || "")) { return "commodities"; }
+    return "indices";
+  }
+
+  function empty(msg) { return h("p", "empty", msg); }
+
+  function table(cols, rows) {
+    var head = h("tr");
+    cols.forEach(function (c) { head.append(h("th", c.cls, c.label)); });
+    var body = h("tbody");
+    rows.forEach(function (r) {
+      var tr = h("tr");
+      cols.forEach(function (c) {
+        var v = c.cell(r);
+        tr.append(h("td", c.cls, v));
+      });
+      body.append(tr);
+    });
+    var t = h("table", "", h("thead", "", head), body);
+    return h("div", "scroll", t);
+  }
+
+  function stat(label, value, extra) {
+    return h("div", "stat", h("dt", "", label), h("dd", "", value), extra || null);
+  }
+
+  /* ---------------------------------------------------------------- header */
+
+  function renderHeader(b) {
+    var asof = obj(b.as_of);
+    var box = $("asof");
+    box.replaceChildren(
+      h("span", "", h("span", "city", "Paris"), h("span", "t", text(asof.paris))),
+      h("span", "", h("span", "city", "New York"), h("span", "t", text(asof.new_york)))
+    );
+    var banners = [];
+    var t = Date.parse(asof.iso);
+    if (isFinite(t)) {
+      var hours = (Date.now() - t) / 3600000;
+      var ageText = hours < 1 ? "moins d’une heure" : hours < 48
+        ? Math.floor(hours) + " h" : Math.floor(hours / 24) + " j";
+      box.append(h("span", "age", "Briefing produit il y a " + ageText));
+      if (hours >= STALE_HOURS) {
+        banners.push(h("p", "banner stale", "Ce briefing date de plus de " + STALE_HOURS +
+          " h. Relancer le briefing avant de s’en servir."));
+      }
+    }
+    if (b.market_state === "closed_weekend") {
+      banners.push(h("p", "banner", "Marché fermé (week-end) : les données sont les dernières clôtures."));
+    }
+    if (typeof b.data_age === "number" && isFinite(b.data_age)) {
+      banners.push(h("p", "banner", "Cache périmé utilisé après un échec réseau : la donnée la plus ancienne a " +
+        fixed(b.data_age / 3600, 1) + " h."));
+    }
+    if (obj(b.calendar).status === "unavailable") {
+      banners.push(h("p", "banner", "Calendrier économique indisponible : les annonces ne sont pas vérifiées."));
+    }
+    $("banners").replaceChildren.apply($("banners"), banners);
+  }
+
+  /* ---------------------------------------------------------------- résumé */
+
+  function clusterMessages(b) {
+    return list(obj(b.swing).clusters).map(function (c) {
+      var who = c.ccy === "USD" ? "le dollar (USD)" : text(c.ccy);
+      return c.count + " des " + c.of + " signaux forex concernent " + who +
+        " : signaux corrélés, pas indépendants.";
+    });
+  }
+
+  function renderResume(b) {
+    var counts = obj(b.counts);
+    var failed = list(counts.failed);
+    var hits = list(obj(b.swing).hits);
+    var rows5 = list(obj(obj(b.strength).windows)["5d"]);
+    var cal = obj(b.calendar);
+    var ev24 = list(obj(b.day_plan).events_24h);
+
+    var strengthTxt = "n/a";
+    if (rows5.length) {
+      var best = rows5[0], worst = rows5[rows5.length - 1];
+      strengthTxt = "meilleure " + text(best.ccy) + " " + signed(best.score, 2) + " %, pire " +
+        text(worst.ccy) + " " + signed(worst.score, 2) + " %";
+    }
+    var calTxt = cal.status === "unavailable" ? "calendrier indisponible, non vérifié"
+      : ev24.length ? plural(ev24.length, "annonce", "annonces") : "aucune";
+
+    var dl = h("dl", "stats",
+      stat("Marché", b.market_state === "closed_weekend" ? "fermé (week-end)" : b.market_state === "open" ? "ouvert" : "n/a"),
+      stat("Données reçues", text(counts.fetched) + " sur " + text(counts.requested),
+        h("span", "note", plural(failed.length, "échec", "échecs"))),
+      stat("Analysés", text(counts.scanned)),
+      stat("Setups", plural(hits.length, "graphique a matché une règle", "graphiques ont matché une règle")),
+      stat("Force des devises, 5 séances", strengthTxt),
+      stat("Annonces à fort impact, 24 h", calTxt)
+    );
+    var out = [dl];
+    clusterMessages(b).forEach(function (m) { out.push(h("p", "note", m)); });
+    if (failed.length) {
+      out.push(h("p", "note", "Sans données : " + failed.map(function (f) {
+        return text(f.symbol);
+      }).join(", ") + "."));
+    }
+    var box = $("resume");
+    box.replaceChildren.apply(box, out);
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.gap = "12px";
+  }
+
+  /* ------------------------------------------------------- force des devises */
+
+  function strengthPanel(title, rows) {
+    var max = 0;
+    rows.forEach(function (r) {
+      if (typeof r.score === "number" && isFinite(r.score)) { max = Math.max(max, Math.abs(r.score)); }
+    });
+    var bars = h("div", "bars");
+    rows.forEach(function (r) {
+      var v = typeof r.score === "number" && isFinite(r.score) ? r.score : null;
+      var fill = h("span", "fill " + (v !== null && v < 0 ? "neg" : "pos"));
+      fill.style.width = v !== null && max > 0 ? (Math.abs(v) / max * 50).toFixed(1) + "%" : "0%";
+      bars.append(h("div", "bar-row",
+        h("span", "ccy", text(r.ccy)),
+        h("span", "track", fill),
+        h("span", "val num", signed(v, 2))));
+    });
+    return h("div", "panel", h("h3", "", title), bars);
+  }
+
+  function renderForce(b) {
+    var w = obj(obj(b.strength).windows);
+    var defs = [["1d", "1 séance"], ["5d", "5 séances"], ["20d", "20 séances"]];
+    var panels = defs.filter(function (d) { return list(w[d[0]]).length; })
+      .map(function (d) { return strengthPanel(d[1], list(w[d[0]])); });
+    var box = $("force");
+    if (!panels.length) { box.replaceChildren(empty("Aucune donnée de force des devises.")); return; }
+    var grid = h("div", "strength");
+    panels.forEach(function (p) { grid.append(p); });
+    box.replaceChildren(grid, h("p", "note",
+      "Rendement logarithmique moyen, en %, sur les paires forex de chaque devise (USD, EUR, GBP, JPY, CHF, AUD, NZD, CAD). " +
+      "Barres vers la droite : devise plus forte que la moyenne ; vers la gauche : plus faible. Chaque colonne a sa propre échelle."));
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.gap = "12px";
+  }
+
+  /* -------------------------------------------------------------- calendrier */
+
+  function eventKey(e) { return [e.utc, e.currency, e.title].join("|"); }
+
+  function renderCalendar(b) {
+    var cal = obj(b.calendar);
+    var status = cal.status;
+    var label = status === "ok" ? "à jour" : status === "partial" ? "partiel" : status === "unavailable" ? "indisponible" : "n/a";
+    var pill = h("span", "pill " + (status === "ok" ? "ok" : "warn"), "Calendrier : " + label);
+    var reason = has(cal.reason) ? h("span", "note", text(cal.reason)) : null;
+    var status_row = h("div", "sub", pill, reason);
+
+    var events = list(cal.events);
+    var in24 = {};
+    list(obj(b.day_plan).events_24h).forEach(function (e) { in24[eventKey(e)] = true; });
+    var box = $("calendar");
+    var body;
+    if (!events.length) {
+      body = empty(status === "unavailable" ? "Calendrier indisponible : aucune annonce vérifiée."
+        : "Aucune annonce à fort impact sur les devises analysées.");
+    } else {
+      body = table([
+        { label: "Date (Paris)", cell: function (e) { return text(e.date_paris); }, cls: "num" },
+        { label: "Heure Paris", cell: function (e) { return text(e.time_paris); }, cls: "num" },
+        { label: "Heure NY", cell: function (e) { return text(e.time_ny); }, cls: "num" },
+        { label: "Devise", cell: function (e) { return text(e.currency); } },
+        { label: "Annonce", cell: function (e) { return text(e.title); }, cls: "wrap" },
+        { label: "Prévu", cell: function (e) { return text(e.forecast); }, cls: "num r" },
+        { label: "Précédent", cell: function (e) { return text(e.previous); }, cls: "num r" },
+        { label: "24 h", cell: function (e) { return in24[eventKey(e)] ? h("span", "pill on", "oui") : ""; } }
+      ], events);
+    }
+    box.replaceChildren(status_row, body);
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.gap = "12px";
+  }
+
+  /* ------------------------------------------------------------ setups swing */
+
+  function setupTags(setups) {
+    var wrap = h("span", "tags");
+    list(setups).forEach(function (s) { wrap.append(h("span", "tag", SETUP_LABELS[s] || text(s))); });
+    return wrap;
+  }
+
+  function renderSwing(b) {
+    var swing = obj(b.swing);
+    var hits = list(swing.hits);
+    var scanned = obj(b.counts).scanned;
+    var box = $("swing");
+    var out = [h("p", "", hits.length + (has(scanned) ? " sur " + scanned + " analysés" : "") +
+      (hits.length > 1 ? " ont matché une règle." : " a matché une règle."))];
+    clusterMessages(b).forEach(function (m) { out.push(h("p", "note", m)); });
+    if (!hits.length) {
+      out.push(empty("Aucun graphique n’a matché une règle sur cette analyse."));
+    }
+    FAMILIES.forEach(function (f) {
+      var rows = hits.filter(function (x) { return family(x.symbol) === f[0]; });
+      if (!rows.length) { return; }
+      out.push(h("div", "sub", h("h3", "", f[1] + " (" + rows.length + ")"), table([
+        { label: "Symbole", cell: function (x) { return text(x.symbol); } },
+        { label: "Nom", cell: function (x) { return text(x.name); } },
+        { label: "Dernier", cell: function (x) { return price(x.last); }, cls: "num r" },
+        { label: "RSI", cell: function (x) { return fixed(x.rsi, 0); }, cls: "num r" },
+        { label: "ATR %", cell: function (x) { return fixed(x.atr_pct, 2); }, cls: "num r" },
+        { label: "Tendance", cell: function (x) { return TREND_LABELS[x.trend] || "n/a"; } },
+        { label: "Règles", cell: function (x) { return setupTags(x.setups); }, cls: "wrap" },
+        { label: "Dernière barre", cell: function (x) { return text(x.last_bar_date); }, cls: "num" }
+      ], rows)));
+    });
+    box.replaceChildren.apply(box, out);
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.gap = "12px";
+  }
+
+  /* ------------------------------------------------------------ plan du jour */
+
+  function renderPlan(b) {
+    var plan = obj(b.day_plan);
+    var sessions = list(plan.sessions);
+    var levels = list(plan.levels);
+    var out = [];
+
+    if (sessions.length) {
+      out.push(h("div", "sub", h("h3", "", "Sessions"), table([
+        { label: "Session", cell: function (s) { return text(s.name); } },
+        { label: "Ouverture Paris", cell: function (s) { return text(s.open_paris); }, cls: "num" },
+        { label: "Fermeture Paris", cell: function (s) { return text(s.close_paris); }, cls: "num" },
+        { label: "Ouverture NY", cell: function (s) { return text(s.open_ny); }, cls: "num" },
+        { label: "Fermeture NY", cell: function (s) { return text(s.close_ny); }, cls: "num" },
+        { label: "État", cell: function (s) {
+          return s.active ? h("span", "pill on", "en cours") : h("span", "pill", "hors séance");
+        } }
+      ], sessions)));
+    } else {
+      out.push(h("div", "sub", h("h3", "", "Sessions"), empty("Sessions non disponibles.")));
+    }
+
+    if (levels.length) {
+      var lv = function (k) { return function (r) { return price(r[k]); }; };
+      out.push(h("div", "sub", h("h3", "", "Niveaux à surveiller"), table([
+        { label: "Symbole", cell: function (r) { return text(r.symbol); } },
+        { label: "Nom", cell: function (r) { return text(r.name); } },
+        { label: "Haut veille", cell: lv("prev_high"), cls: "num r" },
+        { label: "Bas veille", cell: lv("prev_low"), cls: "num r" },
+        { label: "Haut semaine préc.", cell: lv("week_high"), cls: "num r" },
+        { label: "Bas semaine préc.", cell: lv("week_low"), cls: "num r" },
+        { label: "Haut 20 séances", cell: lv("high20"), cls: "num r" },
+        { label: "Bas 20 séances", cell: lv("low20"), cls: "num r" },
+        { label: "Asie haut", cell: lv("asia_high"), cls: "num r" },
+        { label: "Asie bas", cell: lv("asia_low"), cls: "num r" },
+        { label: "Haut jour", cell: lv("day_high"), cls: "num r" },
+        { label: "Bas jour", cell: lv("day_low"), cls: "num r" }
+      ], levels), h("p", "note",
+        "Asie : 00:00 à 07:00 UTC. Haut et bas du jour : depuis 00:00 UTC. n/a : barres 1 h absentes (matières premières, indices, week-end).")));
+    } else {
+      out.push(h("div", "sub", h("h3", "", "Niveaux à surveiller"), empty("Aucun niveau disponible.")));
+    }
+
+    var ev24 = list(plan.events_24h);
+    if (ev24.length) {
+      out.push(h("div", "sub", h("h3", "", "Annonces à fort impact, 24 h"), table([
+        { label: "Date (Paris)", cell: function (e) { return text(e.date_paris); }, cls: "num" },
+        { label: "Heure Paris", cell: function (e) { return text(e.time_paris); }, cls: "num" },
+        { label: "Heure NY", cell: function (e) { return text(e.time_ny); }, cls: "num" },
+        { label: "Devise", cell: function (e) { return text(e.currency); } },
+        { label: "Annonce", cell: function (e) { return text(e.title); }, cls: "wrap" }
+      ], ev24)));
+    }
+    var box = $("plan");
+    box.replaceChildren.apply(box, out);
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.gap = "16px";
+  }
+
+  /* ----------------------------------------------------------- avertissements */
+
+  function renderWarnings(b) {
+    var ws = list(b.warnings);
+    var box = $("warnings");
+    if (!ws.length) { box.replaceChildren(empty("Aucun avertissement.")); return; }
+    var ul = h("ul", "warnings");
+    ws.forEach(function (w) { ul.append(h("li", "", text(w))); });
+    box.replaceChildren(ul);
+  }
+
+  /* ------------------------------------------------------------------ start */
+
+  function section(fn, b, id) {
+    try { fn(b); }
+    catch (e) {
+      var box = $(id);
+      if (box) { box.replaceChildren(empty("Section indisponible : données inattendues.")); }
+    }
+  }
+
+  var b;
+  try { b = JSON.parse($("briefing").textContent); }
+  catch (e) { b = null; }
+  if (!b || typeof b !== "object") {
+    $("banners").replaceChildren(h("p", "banner stale", "Briefing illisible : relancer la commande page."));
+    return;
+  }
+  section(renderHeader, b, "asof");
+  section(renderResume, b, "resume");
+  section(renderForce, b, "force");
+  section(renderCalendar, b, "calendar");
+  section(renderSwing, b, "swing");
+  section(renderPlan, b, "plan");
+  section(renderWarnings, b, "warnings");
+})();
+</script>

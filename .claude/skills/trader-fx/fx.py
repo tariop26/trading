@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""trader-fx command line. Subcommand: brief. Standard library only.
+"""trader-fx command line. Subcommands: brief, page. Standard library only.
 
 Run from the repo root (paths are relative to the working directory):
     python3 .claude/skills/trader-fx/fx.py brief [--list FILE ...] [--no-cache]
         [--json] [--now "YYYY-MM-DD HH:MM"] [--out PATH]
 
+    python3 .claude/skills/trader-fx/fx.py page [--in PATH] [--out PATH]
+
 Exit code 0 when the briefing was produced, 1 otherwise, with one explanatory
-line. No briefing.json is written when no symbol could be fetched.
+line. No briefing.json is written when no symbol could be fetched. `page` turns
+briefing.json into a static HTML page (no network call) and exits 1 with one line
+when the JSON is missing or unreadable.
 """
 import argparse
 import json
@@ -20,11 +24,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import briefing  # noqa: E402
 import data  # noqa: E402
 import economic_calendar  # noqa: E402
+import page  # noqa: E402
 
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_LISTS = ("trader/lists/fx_pairs.txt", "trader/lists/commodities.txt",
                  "trader/lists/indices.txt")
 DEFAULT_OUT = "trader/fx/briefing.json"
+DEFAULT_PAGE = "trader/fx/briefing.html"
+TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report_template.html")
 CACHE_DIR = "trader/fx/cache"
 
 
@@ -45,6 +52,9 @@ def build_parser():
                    help="JSON sur la sortie standard au lieu du résumé")
     b.add_argument("--now", help='heure de New York "YYYY-MM-DD HH:MM" (tests)')
     b.add_argument("--out", default=DEFAULT_OUT, help="fichier briefing.json")
+    g = sub.add_parser("page", help="écrit la page HTML à partir de briefing.json")
+    g.add_argument("--in", dest="inp", default=DEFAULT_OUT, help="fichier briefing.json")
+    g.add_argument("--out", default=DEFAULT_PAGE, help="fichier HTML")
     return p
 
 
@@ -117,10 +127,37 @@ def cmd_brief(args, deps):
     return 0
 
 
+def cmd_page(args):
+    try:
+        with open(args.inp, encoding="utf-8") as f:
+            b = json.load(f)
+    except OSError as e:
+        return _fail("briefing.json introuvable : %s (%s). Lancer d'abord : fx.py brief."
+                     % (args.inp, e.strerror or e))
+    except ValueError as e:
+        return _fail("briefing.json illisible : %s (%s)." % (args.inp, e))
+    if not isinstance(b, dict):
+        return _fail("briefing.json illisible : %s (objet JSON attendu)." % args.inp)
+    try:
+        html = page.render_page(b, TEMPLATE)
+    except (OSError, ValueError) as e:
+        return _fail("Gabarit inutilisable : %s." % e)
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(html)
+    except OSError as e:
+        return _fail("Écriture impossible : %s (%s)." % (args.out, e.strerror or e))
+    print("Page écrite : %s" % args.out)
+    return 0
+
+
 def main(argv=None, deps=None):
     args = build_parser().parse_args(argv)
     if args.cmd == "brief":
         return cmd_brief(args, deps or {})
+    if args.cmd == "page":
+        return cmd_page(args)
     return _fail("Sous-commande inconnue : %s" % args.cmd)
 
 

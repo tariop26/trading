@@ -1,0 +1,420 @@
+{
+  "as_of": {
+    "iso": "2026-11-10T15:00:00+00:00",
+    "paris": "2026-11-10 16:00",
+    "new_york": "2026-11-10 10:00"
+  },
+  "market_state": "open",
+  "counts": {
+    "requested": 9,
+    "fetched": 9,
+    "scanned": 9,
+    "failed": [
+      {
+        "symbol": "USDSEK=X",
+        "reason": "no data"
+      }
+    ]
+  },
+  "data_age": null,
+  "calendar": {
+    "status": "partial",
+    "events": [
+      {
+        "utc": "2026-11-10T13:30:00+00:00",
+        "time_paris": "14:30",
+        "time_ny": "08:30",
+        "date_paris": "2026-11-10",
+        "date_ny": "2026-11-10",
+        "currency": "USD",
+        "title": "CPI m/m",
+        "impact": "High",
+        "forecast": "0.3%",
+        "previous": "0.4%"
+      },
+      {
+        "utc": "2026-11-10T19:00:00+00:00",
+        "time_paris": "20:00",
+        "time_ny": "14:00",
+        "date_paris": "2026-11-10",
+        "date_ny": "2026-11-10",
+        "currency": "USD",
+        "title": "FOMC Member Speaks",
+        "impact": "High",
+        "forecast": "",
+        "previous": ""
+      },
+      {
+        "utc": "2026-11-12T09:30:00+00:00",
+        "time_paris": "10:30",
+        "time_ny": "04:30",
+        "date_paris": "2026-11-12",
+        "date_ny": "2026-11-12",
+        "currency": "GBP",
+        "title": "GDP m/m",
+        "impact": "High",
+        "forecast": "0.1%",
+        "previous": "-0.1%"
+      }
+    ]
+  },
+  "strength": {
+    "windows": {
+      "1d": [
+        {
+          "ccy": "AUD",
+          "score": 3.5983097835637015
+        },
+        {
+          "ccy": "EUR",
+          "score": 2.955880224154443
+        },
+        {
+          "ccy": "GBP",
+          "score": 2.955880224154443
+        },
+        {
+          "ccy": "JPY",
+          "score": 0.3383340833133919
+        },
+        {
+          "ccy": "NZD",
+          "score": 0.26306285927694206
+        },
+        {
+          "ccy": "CHF",
+          "score": 0.2228172712738833
+        },
+        {
+          "ccy": "CAD",
+          "score": -0.4088658063074147
+        },
+        {
+          "ccy": "USD",
+          "score": -1.417916948489913
+        }
+      ],
+      "5d": [
+        {
+          "ccy": "GBP",
+          "score": 4.088951722311656
+        },
+        {
+          "ccy": "EUR",
+          "score": 3.768615689244212
+        },
+        {
+          "ccy": "AUD",
+          "score": 2.9889564651909137
+        },
+        {
+          "ccy": "CHF",
+          "score": 0.8095609101128137
+        },
+        {
+          "ccy": "NZD",
+          "score": 0.6870614487290894
+        },
+        {
+          "ccy": "JPY",
+          "score": 0.1440672475114973
+        },
+        {
+          "ccy": "CAD",
+          "score": 0.12873115309257824
+        },
+        {
+          "ccy": "USD",
+          "score": -1.8022778051703943
+        }
+      ],
+      "20d": [
+        {
+          "ccy": "GBP",
+          "score": 4.722295591370587
+        },
+        {
+          "ccy": "EUR",
+          "score": 4.550784510225952
+        },
+        {
+          "ccy": "AUD",
+          "score": 4.336298099919858
+        },
+        {
+          "ccy": "CHF",
+          "score": 1.1645792362635017
+        },
+        {
+          "ccy": "NZD",
+          "score": 0.8989084023893473
+        },
+        {
+          "ccy": "JPY",
+          "score": 0.6503705851971684
+        },
+        {
+          "ccy": "CAD",
+          "score": 0.05683473834549003
+        },
+        {
+          "ccy": "USD",
+          "score": -2.3400101662445576
+        }
+      ]
+    }
+  },
+  "swing": {
+    "hits": [
+      {
+        "symbol": "EURUSD=X",
+        "name": "EUR/USD",
+        "last": 1.1528687,
+        "rsi": 83.25588799813573,
+        "atr_pct": 0.8069445251959472,
+        "trend": "up",
+        "setups": [
+          "breakout_20d"
+        ],
+        "last_bar_date": "2026-11-09"
+      },
+      {
+        "symbol": "GBPUSD=X",
+        "name": "GBP/USD",
+        "last": 1.3447783,
+        "rsi": 82.52316416980943,
+        "atr_pct": 0.8019507231546443,
+        "trend": "up",
+        "setups": [
+          "breakout_20d"
+        ],
+        "last_bar_date": "2026-11-09"
+      },
+      {
+        "symbol": "AUDUSD=X",
+        "name": "AUD/USD",
+        "last": 0.6851972000000001,
+        "rsi": 80.2178550313946,
+        "atr_pct": 0.8360128455851813,
+        "trend": "up",
+        "setups": [
+          "breakout_20d"
+        ],
+        "last_bar_date": "2026-11-09"
+      },
+      {
+        "symbol": "USDCAD=X",
+        "name": "USD/CAD",
+        "last": 1.3896,
+        "rsi": 55.170544850360535,
+        "atr_pct": 0.6308210910452946,
+        "trend": "up",
+        "setups": [
+          "reclaim_ma20"
+        ],
+        "last_bar_date": "2026-11-09"
+      },
+      {
+        "symbol": "NZDUSD=X",
+        "name": "NZD/USD",
+        "last": 0.60902,
+        "rsi": 64.4627049388717,
+        "atr_pct": 0.6229257475165131,
+        "trend": "up",
+        "setups": [
+          "breakout_20d"
+        ],
+        "last_bar_date": "2026-11-09"
+      },
+      {
+        "symbol": "GC=F",
+        "name": "Or",
+        "last": 2128.4333778000005,
+        "rsi": 83.8426326875009,
+        "atr_pct": 0.7400287243547031,
+        "trend": "up",
+        "setups": [
+          "breakout_20d"
+        ],
+        "last_bar_date": "2026-11-09"
+      }
+    ],
+    "clusters": [
+      {
+        "ccy": "USD",
+        "count": 5,
+        "of": 5
+      }
+    ]
+  },
+  "day_plan": {
+    "sessions": [
+      {
+        "name": "Sydney",
+        "open_paris": "21:00",
+        "close_paris": "06:00",
+        "open_ny": "15:00",
+        "close_ny": "00:00",
+        "active": false
+      },
+      {
+        "name": "Tokyo",
+        "open_paris": "01:00",
+        "close_paris": "10:00",
+        "open_ny": "19:00",
+        "close_ny": "04:00",
+        "active": false
+      },
+      {
+        "name": "London",
+        "open_paris": "09:00",
+        "close_paris": "18:00",
+        "open_ny": "03:00",
+        "close_ny": "12:00",
+        "active": true
+      },
+      {
+        "name": "New York",
+        "open_paris": "14:00",
+        "close_paris": "23:00",
+        "open_ny": "08:00",
+        "close_ny": "17:00",
+        "active": true
+      }
+    ],
+    "levels": [
+      {
+        "symbol": "EURUSD=X",
+        "name": "EUR/USD",
+        "prev_high": 1.1563273061,
+        "prev_low": 1.1494100939,
+        "week_high": 1.1226478699999998,
+        "week_low": 1.10472585,
+        "high20": 1.1563273061,
+        "low20": 1.0925425100000001,
+        "asia_high": 1.0743,
+        "asia_low": 1.068,
+        "day_high": 1.0758,
+        "day_low": 1.068
+      },
+      {
+        "symbol": "GBPUSD=X",
+        "name": "GBP/USD",
+        "prev_high": 1.3488126348999998,
+        "prev_low": 1.3407439651,
+        "week_high": 1.3095268299999998,
+        "week_low": 1.2870272999999999,
+        "high20": 1.3488126348999998,
+        "low20": 1.2763793399999999,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      },
+      {
+        "symbol": "AUDUSD=X",
+        "name": "AUD/USD",
+        "prev_high": 0.6872527916,
+        "prev_low": 0.6831416084,
+        "week_high": 0.66723572,
+        "week_low": 0.6575912899999999,
+        "high20": 0.6872527916,
+        "low20": 0.65260629,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      },
+      {
+        "symbol": "USDCAD=X",
+        "name": "USD/CAD",
+        "prev_high": 1.3937687999999997,
+        "prev_low": 1.3854312,
+        "week_high": 1.39649696,
+        "week_low": 1.3762986799999999,
+        "high20": 1.39649696,
+        "low20": 1.37441435,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      },
+      {
+        "symbol": "NZDUSD=X",
+        "name": "NZD/USD",
+        "prev_high": 0.6108470599999999,
+        "prev_low": 0.60719294,
+        "week_high": 0.6092422599999999,
+        "week_low": 0.6010713599999999,
+        "high20": 0.6108470599999999,
+        "low20": 0.59772144,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      },
+      {
+        "symbol": "GC=F",
+        "name": "Or",
+        "prev_high": 2134.8186779334,
+        "prev_low": 2122.0480776666004,
+        "week_high": 2092.95948817,
+        "week_low": 2054.37412263,
+        "high20": 2134.8186779334,
+        "low20": 2026.0947659800001,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      },
+      {
+        "symbol": "USDJPY=X",
+        "name": "USD/JPY",
+        "prev_high": 144.64325186,
+        "prev_low": 143.77798814000002,
+        "week_high": 145.51418685,
+        "week_low": 143.9010977,
+        "high20": 146.32993677999997,
+        "low20": 143.77798814000002,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      },
+      {
+        "symbol": "USDCHF=X",
+        "name": "USD/CHF",
+        "prev_high": 0.8588187499999999,
+        "prev_low": 0.85368125,
+        "week_high": 0.8680864699999998,
+        "week_low": 0.85558552,
+        "high20": 0.8741746799999999,
+        "low20": 0.85368125,
+        "asia_high": null,
+        "asia_low": null,
+        "day_high": null,
+        "day_low": null
+      }
+    ],
+    "events_24h": [
+      {
+        "utc": "2026-11-10T19:00:00+00:00",
+        "time_paris": "20:00",
+        "time_ny": "14:00",
+        "date_paris": "2026-11-10",
+        "date_ny": "2026-11-10",
+        "currency": "USD",
+        "title": "FOMC Member Speaks",
+        "impact": "High",
+        "forecast": "",
+        "previous": ""
+      }
+    ]
+  },
+  "warnings": [
+    "Sans données : 1 symbole(s) en échec (USDSEK=X).",
+    "Calendrier économique partiel : next week: pas encore publié (HTTP 404).",
+    "Barres 1 h indisponibles pour 6 symbole(s) en alerte (GBPUSD=X, USDJPY=X) : plage asiatique non calculée."
+  ],
+  "disclaimer": "Liste de graphiques qui ont matché une règle. Pas un conseil. Données Yahoo, retardées."
+}
