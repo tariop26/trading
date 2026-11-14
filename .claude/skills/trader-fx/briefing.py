@@ -105,7 +105,8 @@ def since_close(idea, hourly):
     idea["last_bar_date"]. None when there is no such bar (no hourly data, or none
     after the close, e.g. on a weekend). Otherwise {"last", "stop_crossed",
     "target_crossed"}: haussier -> lowest low <= stop, highest high >= target;
-    baissier -> highest high >= stop, lowest low <= target. Approximation:
+    baissier -> highest high >= stop, lowest low <= target (decided on the raw bars).
+    "last" is the last close rounded to idea["decimals"] (raw when absent). Approximation:
     last_bar_date is the symbol's local date, compared with UTC dates."""
     if hourly is None or not idea.get("last_bar_date"):
         return None
@@ -121,7 +122,11 @@ def since_close(idea, hourly):
         stop_crossed, target_crossed = low <= idea["stop"], high >= idea["target"]
     else:
         stop_crossed, target_crossed = high >= idea["stop"], low <= idea["target"]
-    return {"last": after[-1][4], "stop_crossed": bool(stop_crossed),
+    last = after[-1][4]
+    decimals = idea.get("decimals")
+    if isinstance(decimals, int) and not isinstance(decimals, bool) and decimals >= 0:
+        last = round(last, decimals)        # the idea's own price grid, not a raw float
+    return {"last": last, "stop_crossed": bool(stop_crossed),
             "target_crossed": bool(target_crossed)}
 
 

@@ -138,8 +138,29 @@ def bar(ts, high, low, close):
 
 class TestSinceClose(unittest.TestCase):
     LONG = {"side": "haussier", "stop": 1.17565, "target": 1.2487,
-            "last_bar_date": "2026-11-09"}
-    SHORT = {"side": "baissier", "stop": 1.22, "target": 1.15, "last_bar_date": "2026-11-09"}
+            "last_bar_date": "2026-11-09", "decimals": 5}
+    SHORT = {"side": "baissier", "stop": 1.22, "target": 1.15, "last_bar_date": "2026-11-09",
+             "decimals": 5}
+
+    def test_last_is_rounded_to_the_idea_decimals(self):
+        s = hseries([bar(D10 + H, 1.21, 1.18, 1.1890980017757904)])
+        got = briefing.since_close(self.LONG, s)
+        self.assertEqual(got["last"], 1.1891)
+        self.assertEqual(repr(got["last"]), "1.1891")
+        got = briefing.since_close(dict(self.LONG, decimals=3), s)
+        self.assertEqual(got["last"], 1.189)
+        got = briefing.since_close(dict(self.LONG, decimals=2), s)
+        self.assertEqual(got["last"], 1.19)
+        # the crossings are decided on the raw bars, not on the rounded close
+        s = hseries([bar(D10 + H, 1.21, 1.17565, 1.1890980017757904)])
+        self.assertTrue(briefing.since_close(self.LONG, s)["stop_crossed"])
+
+    def test_last_stays_a_raw_float_when_the_idea_has_no_usable_decimals(self):
+        s = hseries([bar(D10 + H, 1.21, 1.18, 1.1890980017757904)])
+        for idea in (dict(self.LONG, decimals=None), {k: v for k, v in self.LONG.items()
+                                                      if k != "decimals"},
+                     dict(self.LONG, decimals="5"), dict(self.LONG, decimals=-1)):
+            self.assertEqual(briefing.since_close(idea, s)["last"], 1.1890980017757904)
 
     def test_none_without_bars_after_the_close(self):
         self.assertIsNone(briefing.since_close(self.LONG, None))

@@ -993,17 +993,30 @@ class TestInlineScriptRuns(unittest.TestCase):
         ti = b["trade_ideas"]
         out = self.run_node(b)
         self.assertEqual(out.count("1 autre idée a le même score que la dernière affichée ; "
-                                   "à score égal, l'ordre est alphabétique."), 1)
+                                   "à score égal, l'idée qui a le plus de signaux passe devant, "
+                                   "puis l'ordre alphabétique."), 1)
         ti["ties_at_cutoff"] = 3
         out = self.run_node(b)
         self.assertIn("3 autres idées ont le même score que la dernière affichée ; à score "
-                      "égal, l'ordre est alphabétique.", out)
+                      "égal, l'idée qui a le plus de signaux passe devant, puis l'ordre "
+                      "alphabétique.", out)
         for v in (0, None, "2", -1):
             ti["ties_at_cutoff"] = v
             self.assertNotIn("même score", self.run_node(b), repr(v))
         for v in (0, 0.0, None, "1", -2):
             ti["total_leverage"] = v
             self.assertNotIn("levier cumulé", self.run_node(b), repr(v))
+
+    def test_account_line_money_rounds_to_cents_first(self):
+        b = sample()
+        acc = b["trade_ideas"]["account"]
+        for capital, shown in ((1234.999, "1" + NBSP + "235.00"), (100000, "100" + NBSP + "000"),
+                               (12345.67, "12" + NBSP + "345.67"), (0.5, "0.50"),
+                               (999.996, "1" + NBSP + "000.00"), (-1234.999, "-1" + NBSP + "235.00"),
+                               (-0.5, "-0.50"), (0, "0"), (1234567.891, "1" + NBSP + "234" + NBSP + "567.89")):
+            acc["capital"] = capital
+            out = self.run_node(b)
+            self.assertIn("Compte : %s USD" % shown, out, repr(capital))
 
     def test_size_cosmetics(self):
         b = sample()

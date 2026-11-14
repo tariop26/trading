@@ -533,7 +533,12 @@
   function trimmed(v, d) { return String(Number(v.toFixed(d))); }
   // thousands separated by a no-break space (U+00A0) so "62 000" never breaks
   function spaced(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0"); }
-  function money(n) { return Number.isInteger(n) ? spaced(n) : spaced(Math.trunc(n)) + (Math.abs(n) % 1).toFixed(2).slice(1); }
+  // rounded to cents first (so 1234.999 is 1 235.00, never 1 234.00); an integer keeps no decimals
+  function money(n) {
+    var cents = Math.round(Math.abs(n) * 100), whole = Math.floor(cents / 100), frac = cents % 100;
+    return (n < 0 && cents > 0 ? "-" : "") + spaced(whole) +
+      (Number.isInteger(n) ? "" : "." + (frac < 10 ? "0" : "") + frac);
+  }
   function count(v) { return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0; }
 
   // the decimals carried by the idea (the tick of its plan); without them, the old rule:
@@ -674,7 +679,8 @@
       var ties = count(ti.ties_at_cutoff);
       if (ties) {
         out.push(h("p", "note", (ties > 1 ? ties + " autres idées ont" : "1 autre idée a") +
-          " le même score que la dernière affichée ; à score égal, l'ordre est alphabétique."));
+          " le même score que la dernière affichée ; à score égal, l'idée qui a le plus de signaux " +
+          "passe devant, puis l'ordre alphabétique."));
       }
       var grid = h("div", "ideas");
       ideas.forEach(function (idea) { grid.append(ideaCard(idea, account)); });

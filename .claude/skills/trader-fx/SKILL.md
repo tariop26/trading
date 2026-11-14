@@ -158,8 +158,10 @@ des règles haussières, calculées sur les clôtures (30 séances minimum).
   cotation en JPY) ; autres instruments selon le prix (sous 10 : 4 décimales,
   sous 100 : 3, sinon 2) ; chaque idée porte ses `decimals`. La taille est
   calculée sur l'entrée et le stop arrondis, ceux qui sont affichés. `rr` est le
-  rapport nominal (2) : à cause des arrondis dirigés, le rapport réalisé est de
-  1,998 à 1,999. ATR indisponible : idée écartée. Un plan dont l'ordre stop <
+  rapport nominal (`target_r`) : la cible est recalculée depuis la distance
+  arrondie, puis arrondie vers l'entrée ; le rapport réalisé est égal au
+  nominal quand `target_r` × distance tombe sur la grille de prix, et s'en écarte
+  de moins d'un pas de prix sinon. ATR indisponible : idée écartée. Un plan dont l'ordre stop <
   entrée < cible (haussier) ou cible < entrée < stop (baissier) ne tient pas
   après arrondi, ou dont le stop ou la cible n'est pas positif, est écarté
   (« plan impossible »). Une distance au stop sous 0,15 % du prix est écartée
@@ -168,7 +170,7 @@ des règles haussières, calculées sur les clôtures (30 séances minimum).
 - Taille : risque fixé = 0,5 % du capital par idée (500 USD pour 100 000 USD),
   taille toujours arrondie vers le bas. Le risque affiché au stop est exact pour
   les paires cotées en USD (EURUSD...) et pour les paires dont la base est l'USD
-  (USDJPY, USDCHF, USDCAD...) : leur perte est convertie au cours du stop
+  (USDJPY, USDCHF, USDCAD...) : leur risque au stop est converti au cours du stop
   (`|entrée − stop| / stop` USD par unité). Pour les croisées (ni base ni
   cotation en USD, EURJPY, GBPCHF...), le cours de la devise de cotation en USD
   au moment du stop est inconnu : le chiffre est calculé au cours du jour de
@@ -181,7 +183,7 @@ des règles haussières, calculées sur les clôtures (30 séances minimum).
   matières premières : taille calculée avec la table `contracts`.
 - Date et caducité : chaque idée porte la date de la clôture sur laquelle elle
   repose (`last_bar_date`). Quand des barres 1 h existent après cette clôture,
-  `since_close` donne le dernier cours 1 h et dit si le stop ou la cible a déjà
+  `since_close` donne le dernier cours 1 h (arrondi aux `decimals` de l'idée) et dit si le stop ou la cible a déjà
   été franchi depuis. Une idée dont le stop est déjà franchi est caduque : la
   page et le résumé le disent (« Stop déjà franchi depuis la clôture : plan
   caduc. », « stop déjà franchi »). Pas de barres 1 h (week-end, matières

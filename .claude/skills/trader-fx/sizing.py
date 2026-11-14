@@ -11,6 +11,7 @@ the entry-day rate and can differ by roughly the stop distance in percent. Gaps 
 slippage are never included.
 """
 import math
+from decimal import ROUND_HALF_UP, Decimal
 
 import strength
 
@@ -48,6 +49,15 @@ def _steps(amount, step):
     that noise level.
     """
     return math.floor(round(amount / step, 6))
+
+
+def usd_cents(x):
+    """`x` USD rounded to the cent, a half-cent tie going UP.
+
+    Float `round` goes to even on an exact tie and shows 4971.875 as 4971.87; the
+    product of floats also carries noise (4971.874999999993), so it is cleaned at 6
+    decimals (the noise level used by `_steps`) before the decimal half-up round."""
+    return float(Decimal(repr(round(x, 6))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _positive(x):
@@ -128,7 +138,7 @@ def size_forex(symbol, entry, stop, prices, capital, risk_pct, leverage_max):
         "ok",
         lots=round(units / LOT_UNITS, 2),
         units=int(units),
-        risk_usd=round(units * loss_per_unit, 2),
+        risk_usd=usd_cents(units * loss_per_unit),
         leverage=round(units * b2u / capital, 2),
         pip_value_usd_per_lot=round(LOT_UNITS * pip_size(quote) * q2u, 4),
         limited_by=limited_by,
@@ -167,7 +177,7 @@ def size_contract(symbol, entry, stop, contract, capital, risk_pct, leverage_max
     return _result(
         "ok",
         size=size,
-        risk_usd=round(size * loss_per_size, 2),
+        risk_usd=usd_cents(size * loss_per_size),
         # 3 decimals (not 2): the brief's worked value is 0.396, which 2 decimals would blur
         leverage=round(size * value_per_size / capital, 3),
         limited_by=limited_by,

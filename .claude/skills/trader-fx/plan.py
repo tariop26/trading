@@ -311,11 +311,11 @@ def build_trade_ideas(analyses, config):
     return {
         "reference": "last_close",
         "account": {"currency": config["account"]["currency"], "capital": capital,
-                    "risk_per_trade_usd": round(budget, 2),
+                    "risk_per_trade_usd": sizing.usd_cents(budget),
                     "leverage_max": config["leverage_max"]},
         "ideas": ideas,
         "skipped": dropped + skipped,
-        "total_risk_usd": round(total, 2),
+        "total_risk_usd": sizing.usd_cents(total),
         "total_risk_pct": round(total_pct, 2),
         "max_total_pct": max_total_pct,
         "over_cap": round(total, 2) > cap_cents,

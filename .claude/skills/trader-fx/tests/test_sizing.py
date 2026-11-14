@@ -1,6 +1,7 @@
 import _path  # noqa
 import random
 import unittest
+from decimal import Decimal, ROUND_HALF_UP
 
 import sizing
 
@@ -14,6 +15,12 @@ KEYS = {"status", "lots", "units", "size", "risk_usd", "leverage",
 
 def fx(symbol, entry, stop, prices, capital=CAPITAL, risk_pct=RISK_PCT, lev=LEV):
     return sizing.size_forex(symbol, entry, stop, prices, capital, risk_pct, lev)
+
+
+def half_up(x):
+    """Independent reference: x (a float or a Decimal) to cents, half-cent ties up."""
+    d = x if isinstance(x, Decimal) else Decimal(repr(round(x, 6)))
+    return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 class TestHelpers(unittest.TestCase):
@@ -114,6 +121,53 @@ class TestForex(unittest.TestCase):
             self.assertAlmostEqual(s["risk_usd"], true_loss, delta=0.005 + 1e-9)
             self.assertEqual(units % 1000, 0)
         self.assertGreater(ok_count, 2000)
+
+    def test_usdchf_half_cent_tie_is_displayed_upward(self):
+        # capital 1 000 000, 0.5 % -> budget 5 000 -> 165 000 units; the exact loss at the
+        # stop is 165 000 * (1.056 - 1.02418) / 1.056 = 4 971.875 (a half-cent tie, checked
+        # in Decimal); the float product is 4971.874999999993, which `round` shows as 4971.87
+        exact = (Decimal(165000) * (Decimal("1.056") - Decimal("1.02418")) / Decimal("1.056"))
+        self.assertEqual(exact, Decimal("4971.875"))
+        s = fx("USDCHF=X", 1.02418, 1.056, {"USDCHF=X": 1.02418}, capital=1000000)
+        self.assertEqual(s["units"], 165000)
+        self.assertEqual(s["risk_usd"], 4971.88)
+        self.assertLessEqual(s["risk_usd"], 5000.0)
+
+    def test_displayed_risk_is_the_true_loss_to_the_cent_half_up_and_within_budget(self):
+        """Seeded sweep, USD-base and USD-quote pairs: the displayed risk never exceeds the
+        budget (itself shown half-up) and is within half a cent of the exact loss, which
+        is computed in Decimal from the displayed entry, stop and units."""
+        rng = random.Random(20261116)
+        pairs = (("USDJPY=X", 150.0, 3), ("USDCHF=X", 0.88, 5), ("USDCAD=X", 1.39, 5),
+                 ("USDZAR=X", 18.2, 5), ("EURUSD=X", 1.10, 5), ("GBPUSD=X", 1.30, 5),
+                 ("AUDUSD=X", 0.66, 5))
+        ok_usd_base = ok_usd_quote = 0
+        for i in range(6000):
+            symbol, base, decimals = pairs[i % len(pairs)]
+            capital = rng.choice([1000, 25000, 100000, 250000, 1000000, 994375])
+            risk_pct = rng.choice([0.25, 0.5, 1.0, 0.7])
+            budget = capital * risk_pct / 100.0
+            entry = round(base * (1 + rng.uniform(-0.05, 0.05)), decimals)
+            frac = rng.uniform(0.0015, 0.06)
+            stop = round(entry * (1 - frac) if rng.random() < 0.5 else entry * (1 + frac),
+                         decimals)
+            s = fx(symbol, entry, stop, {symbol: entry}, capital=capital, risk_pct=risk_pct)
+            if s["status"] != "ok":
+                continue
+            d_dist = abs(Decimal(repr(entry)) - Decimal(repr(stop)))
+            if symbol.startswith("USD"):
+                ok_usd_base += 1
+                true_loss = Decimal(s["units"]) * d_dist / Decimal(repr(stop))
+            else:
+                ok_usd_quote += 1
+                true_loss = Decimal(s["units"]) * d_dist
+            self.assertLessEqual(s["risk_usd"], half_up(budget), (symbol, entry, stop))
+            self.assertLessEqual(abs(Decimal(repr(s["risk_usd"])) - true_loss),
+                                 Decimal("0.005") + Decimal("1e-9"), (symbol, entry, stop))
+            if abs(true_loss * 1000 % 10 - 5) < Decimal("1e-6"):    # an exact half-cent tie
+                self.assertEqual(s["risk_usd"], half_up(true_loss), (symbol, entry, stop))
+        self.assertGreater(ok_usd_base, 2000)
+        self.assertGreater(ok_usd_quote, 2000)
 
     def test_cross_converted_through_a_dollar_pair_and_float_floor(self):
         prices = {"GBPCHF=X": 1.10, "USDCHF=X": 0.88, "GBPUSD=X": 1.30}
@@ -226,6 +280,14 @@ class TestContract(unittest.TestCase):
         self.assertIsNone(s["lots"])
         self.assertIsNone(s["units"])
         self.assertIsNone(s["pip_value_usd_per_lot"])
+
+    def test_contract_half_cent_tie_is_displayed_upward(self):
+        # capital 26 at 0.5 % -> budget 0.13 ; one size step loses 0.5 * 0.25 = 0.125, an
+        # exact tie: shown as 0.13 (half-up), not 0.12 (float round, half to even)
+        s = sizing.size_contract("^X", 10.0, 9.5, {"usd_per_point": 0.25, "step": 1, "min": 1},
+                                 26, 0.5, 30)
+        self.assertEqual(s["size"], 1)
+        self.assertEqual(s["risk_usd"], 0.13)
 
     def test_contract_below_min_is_too_wide(self):
         s = sizing.size_contract("^FCHI", 8000, 2000, CONTRACT, CAPITAL, RISK_PCT, LEV)

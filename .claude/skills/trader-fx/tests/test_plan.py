@@ -665,6 +665,36 @@ class TestFinalWave(unittest.TestCase):
         self.assertEqual((out["max_ideas_within_cap"], out["over_cap"]), (0, False))
         self.assertEqual(plan.build_trade_ideas([], cfg())["max_ideas_within_cap"], 0)
 
+    def test_max_ideas_within_cap_uses_the_largest_risks_not_the_smallest(self):
+        # cap 0.7 % of 100 000 = 700 ; counted risks 500 (to_confirm, at the per-trade
+        # budget), 300, 300: the two largest (500 + 300 = 800) do not fit, 500 alone does
+        # -> 1. A k-smallest implementation (300 + 300 = 600 <= 700) would answer 2.
+        c = cfg(risk={"per_trade_pct": 0.5, "max_total_pct": 0.7},
+                ideas={"max_shown": 10, "max_per_exposure": 5})
+        sizes = [ok_size(300.0), status_size("to_confirm"), ok_size(300.0)]
+        out = self.run_sizes(list(sizes), c)
+        self.assertEqual(out["total_risk_usd"], 1100.0)
+        self.assertEqual(out["max_ideas_within_cap"], 1)
+        self.assertIs(out["over_cap"], True)
+        counted = 3
+        self.assertEqual(out["over_cap"] is False, out["max_ideas_within_cap"] == counted)
+        # everything fits: 1.2 % cap -> all three counted, not over the cap
+        c = cfg(risk={"per_trade_pct": 0.5, "max_total_pct": 1.2},
+                ideas={"max_shown": 10, "max_per_exposure": 5})
+        out = self.run_sizes(list(sizes), c)
+        self.assertEqual(out["max_ideas_within_cap"], 3)
+        self.assertIs(out["over_cap"], False)
+        self.assertEqual(out["over_cap"] is False, out["max_ideas_within_cap"] == counted)
+
+    def test_displayed_money_rounds_a_half_cent_tie_upward(self):
+        # capital 25 at 0.5 % -> budget 0.125 (exact tie): a to_confirm idea counts at it
+        c = cfg(account={"capital": 25}, risk={"per_trade_pct": 0.5, "max_total_pct": 5.0},
+                ideas={"max_shown": 10, "max_per_exposure": 5})
+        out = self.run_sizes([status_size("to_confirm")], c)
+        self.assertEqual(out["account"]["risk_per_trade_usd"], 0.13)
+        self.assertEqual(out["total_risk_usd"], 0.13)
+        self.assertIs(out["over_cap"], False)
+
     def test_over_cap_false_exactly_when_all_counted_ideas_fit(self):
         import random
         rng = random.Random(2811)
