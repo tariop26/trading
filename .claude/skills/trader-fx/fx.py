@@ -33,6 +33,7 @@ DEFAULT_OUT = "trader/fx/briefing.json"
 DEFAULT_PAGE = "trader/fx/briefing.html"
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report_template.html")
 CACHE_DIR = "trader/fx/cache"
+WORKERS = 3  # parallel Yahoo requests (a cold run is ~85 s sequentially)
 
 
 def parse_now(text):
@@ -91,7 +92,7 @@ def cmd_brief(args, deps):
     use_cache = not args.no_cache
     daily, failed = fetch_bars([s for s, _ in universe], *data.DAILY,
                                cache_dir=CACHE_DIR, ttl_s=data.TTL_DAILY,
-                               use_cache=use_cache)
+                               use_cache=use_cache, workers=WORKERS)
     if not daily:
         return _fail("Aucun symbole reçu sur %d demandés : pas de briefing écrit."
                      % len(universe))
@@ -103,7 +104,8 @@ def cmd_brief(args, deps):
     hourly, extra = {}, []
     if alert:
         hourly, _ = fetch_bars(alert, *data.HOURLY, cache_dir=CACHE_DIR,
-                                     ttl_s=data.TTL_INTRADAY, use_cache=use_cache)
+                                     ttl_s=data.TTL_INTRADAY, use_cache=use_cache,
+                                     workers=WORKERS)
         missing = [s for s in alert if s not in hourly]
         if missing:
             extra.append("Barres 1 h indisponibles pour %d symbole(s) en alerte (%s) : "
@@ -152,7 +154,15 @@ def cmd_page(args):
     return 0
 
 
+def _utf8_streams():
+    """Piped output on Windows defaults to the ANSI code page: force UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
 def main(argv=None, deps=None):
+    _utf8_streams()
     args = build_parser().parse_args(argv)
     if args.cmd == "brief":
         return cmd_brief(args, deps or {})

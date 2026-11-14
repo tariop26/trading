@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 # (ts_utc, open, high, low, close)
@@ -174,35 +175,53 @@ def write_cache(path, fetched_at, series):
 # ---------------------------------------------------------------- public
 
 def fetch_bars(symbols, interval, rng, *, cache_dir, ttl_s, use_cache=True,
-               now=None, http_get=None, sleep=time.sleep):
-    """-> ({symbol: Series}, [{"symbol", "reason"}]).
+               now=None, http_get=None, sleep=time.sleep, workers=1):
+    """-> ({symbol: Series}, [{"symbol", "reason"}]), both in input order.
 
     A fresh cache file (younger than ttl_s) is used without any request. After a
     network failure a stale cache is still returned, with Series.age_s set to its
-    age. use_cache=False neither reads nor falls back to the cache."""
+    age. use_cache=False neither reads nor falls back to the cache.
+
+    workers=1 (default) is sequential: PAUSE seconds between two real requests.
+    workers>1 fetches with that many threads; each task sleeps PAUSE before its own
+    real request (never for a cache hit), so http_get and sleep must be usable from
+    several threads at once. Results never depend on completion order."""
     http_get = http_get or _http_get
     now = time.time() if now is None else now
-    out, failed = {}, []
-    requested = False
-    for sym in symbols:
+
+    def one(sym, pause):
+        """-> ("ok", Series) or ("fail", reason), and whether a request was made."""
         path = cache_path(cache_dir, sym, interval, rng) if cache_dir else None
         cached = read_cache(path) if (path and use_cache) else None
         if cached and 0 <= now - cached[0] <= ttl_s:
-            out[sym] = cached[1]
-            continue
-        if requested:
+            return ("ok", cached[1]), False
+        if pause:
             sleep(PAUSE)
-        requested = True
         try:
             series = parse_chart(yahoo_get(chart_path(sym, interval, rng), http_get, sleep), sym)
         except DataError as e:
             if cached:
                 cached[1].age_s = max(0.0, now - cached[0])
-                out[sym] = cached[1]
-            else:
-                failed.append({"symbol": sym, "reason": str(e)})
-            continue
-        out[sym] = series
+                return ("ok", cached[1]), True
+            return ("fail", str(e)), True
         if path:
             write_cache(path, now, series)
+        return ("ok", series), True
+
+    symbols = list(symbols)
+    if workers > 1 and len(symbols) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = [r for r, _ in pool.map(lambda sym: one(sym, True), symbols)]
+    else:
+        results, requested = [], False
+        for sym in symbols:
+            r, did = one(sym, requested)
+            results.append(r)
+            requested = requested or did
+    out, failed = {}, []
+    for sym, (kind, value) in zip(symbols, results):
+        if kind == "ok":
+            out[sym] = value
+        else:
+            failed.append({"symbol": sym, "reason": value})
     return out, failed

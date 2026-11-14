@@ -1,4 +1,4 @@
-# Forex - 75 paires, symboles Yahoo (XXXYYY=X). Un symbole par ligne, # = commentaire.
+# Forex - 74 paires, symboles Yahoo (XXXYYY=X). Un symbole par ligne, # = commentaire.
 # Usage: scan.py daily --watchlist trader/lists/fx_pairs.txt --min-price 0 --min-volume 0 --no-write
 
 # Majors
@@ -45,7 +45,6 @@ USDHUF=X|USD/HUF
 USDCZK=X|USD/CZK
 USDSGD=X|USD/SGD
 USDHKD=X|USD/HKD
-USDCNH=X|USD/CNH
 USDCNY=X|USD/CNY
 USDINR=X|USD/INR
 USDTHB=X|USD/THB

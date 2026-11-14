@@ -3,6 +3,8 @@ import io
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 
@@ -163,6 +165,91 @@ class FetchTests(unittest.TestCase):
         got, failed = self.fetch(net, symbols=("XXX=X", "EURUSD=X"))
         self.assertEqual(list(got), ["EURUSD=X"])
         self.assertEqual([f["symbol"] for f in failed], ["XXX=X"])
+
+
+class KeyedNet:
+    """Thread-safe http_get answering by symbol found in the URL. A symbol mapped to
+    an Exception is raised, to a str returned; unknown symbols get NO_DATA."""
+
+    def __init__(self, table, delay=0.0):
+        self.table, self.delay = table, delay
+        self.urls = []
+        self._lock = threading.Lock()
+
+    def __call__(self, url):
+        with self._lock:
+            self.urls.append(url)
+        sym = url.split("/chart/")[1].split("?")[0].replace("%3D", "=")
+        if self.delay:  # earlier symbols answer later: completion order != input order
+            time.sleep(self.delay * (3 - len(self.urls) % 4))
+        item = self.table.get(sym, NO_DATA)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class LockedSleeps(Sleeps):
+    def __init__(self):
+        super().__init__()
+        self._lock = threading.Lock()
+
+    def __call__(self, s):
+        with self._lock:
+            self.calls.append(s)
+
+
+class WorkersTests(unittest.TestCase):
+    SYMS = ("A=X", "B=X", "BAD=X", "C=X", "D=X", "E=X")
+
+    def table(self):
+        return {s: GOOD for s in self.SYMS if s != "BAD=X"}
+
+    def fetch(self, net, workers, sleep=None, symbols=None, **kw):
+        kw.setdefault("cache_dir", None)
+        kw.setdefault("ttl_s", 3600)
+        return data.fetch_bars(list(symbols or self.SYMS), "1d", "6mo", http_get=net,
+                               sleep=sleep or LockedSleeps(), now=100000.0,
+                               workers=workers, **kw)
+
+    def test_workers_3_same_result_and_order_as_sequential(self):
+        seq = self.fetch(KeyedNet(self.table()), 1)
+        par = self.fetch(KeyedNet(self.table(), delay=0.01), 3)
+        self.assertEqual(par, seq)
+        self.assertEqual(list(par[0]), ["A=X", "B=X", "C=X", "D=X", "E=X"])
+
+    def test_failure_lands_in_failed_in_input_order(self):
+        table = self.table()
+        table["E=X"] = NO_DATA
+        got, failed = self.fetch(KeyedNet(table, delay=0.01), 3)
+        self.assertEqual([f["symbol"] for f in failed], ["BAD=X", "E=X"])
+        self.assertTrue(all(f["reason"].startswith("no data") for f in failed))
+        self.assertNotIn("BAD=X", got)
+
+    def test_pause_before_each_real_request_workers_3(self):
+        sl = LockedSleeps()
+        self.fetch(KeyedNet(self.table()), 3, sleep=sl)
+        self.assertEqual(sl.calls, [data.PAUSE] * len(self.SYMS))
+
+    def test_cache_hits_make_no_request_and_no_pause_workers_3(self):
+        with tempfile.TemporaryDirectory() as d:
+            for s in self.SYMS:
+                write_cache(d, 100000.0 - 100, name=s.replace("=", "_") + "_1d_6mo.json")
+            net, sl = KeyedNet(self.table()), LockedSleeps()
+            got, failed = self.fetch(net, 3, sleep=sl, cache_dir=d)
+        self.assertEqual(net.urls, [])
+        self.assertEqual(sl.calls, [])
+        self.assertEqual(failed, [])
+        self.assertEqual(list(got), list(self.SYMS))
+
+    def test_stale_cache_fallback_workers_3(self):
+        with tempfile.TemporaryDirectory() as d:
+            for s in self.SYMS:
+                write_cache(d, 100000.0 - 7200, name=s.replace("=", "_") + "_1d_6mo.json")
+            table = {s: http_error(500) for s in self.SYMS}
+            got, failed = self.fetch(KeyedNet(table), 3, cache_dir=d)
+        self.assertEqual(failed, [])
+        self.assertEqual(list(got), list(self.SYMS))
+        self.assertTrue(all(s.age_s == 7200 for s in got.values()))
 
 
 class CacheTests(unittest.TestCase):

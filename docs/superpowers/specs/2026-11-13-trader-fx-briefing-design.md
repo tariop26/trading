@@ -30,7 +30,7 @@ Hypothèses (à corriger à la relecture) : l'outil aide à décider et n'envoie
 
 ## 4. Emplacement et approche
 
-Nouveau skill `C:/Users/m.poirat/TRADING/.claude/skills/trader-fx/` : Python 3, bibliothèque standard seulement (comme `scan.py`), tests `unittest`. Les sorties vont dans `trader/fx/`. Les listes d'entrée existent déjà : `trader/lists/fx_pairs.txt` (75 paires), `commodities.txt` (18 futures), `indices.txt` (12 indices et DXY).
+Nouveau skill `C:/Users/m.poirat/TRADING/.claude/skills/trader-fx/` : Python 3, bibliothèque standard seulement (comme `scan.py`), tests `unittest`. Les sorties vont dans `trader/fx/`. Les listes d'entrée existent déjà : `trader/lists/fx_pairs.txt` (74 paires), `commodities.txt` (18 futures), `indices.txt` (12 indices et DXY).
 
 Approches écartées : étendre `scan.py` (fichier déjà long et propre aux actions) ; tout faire dans une page web (les requêtes sortantes d'une page publiée sont bloquées).
 
@@ -121,7 +121,7 @@ Claude lit `briefing.json` et publie un Artifact en y intégrant les données (l
 
 ## 6. Gestion des erreurs
 
-- Résultat partiel dit partiel : « 74 de 75 paires reçues », avec la liste des échecs.
+- Résultat partiel dit partiel : « 73 de 74 paires reçues », avec la liste des échecs.
 - Calendrier indisponible : le briefing continue, `calendar.status = "unavailable"`, bandeau visible.
 - Cache périmé utilisé après un échec : âge affiché dans `data_age` et dans les avertissements.
 - Week-end : dernières clôtures, `market_state = "closed_weekend"`, mention explicite.

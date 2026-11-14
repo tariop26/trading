@@ -2,7 +2,7 @@
 name: trader-fx
 description: >-
   Briefing forex, matières premières et indices (CFD). Lit des graphiques
-  Yahoo gratuits et retardés (jour et 1 heure) pour environ 105 symboles : paires
+  Yahoo gratuits et retardés (jour et 1 heure) pour environ 104 symboles : paires
   forex, matières premières, indices. Calcule la force des devises (1, 5 et 20
   séances), lit le calendrier économique de la semaine (annonces à fort impact
   des prochaines 24 h), cherche les setups swing (cassure du plus haut de 20
@@ -25,7 +25,7 @@ Le briefing FX lit des graphiques gratuits et dit lesquels ont matché une règl
 C'est tout. Une liste de graphiques qui ont matché une règle n'est pas une liste de
 positions à prendre, et un setup sur un graphique n'est pas une prévision. La
 plupart des particuliers qui tradent des CFD ou du forex perdent de l'argent ;
-ce briefing ne change rien à cela. Il vous évite d'ouvrir 105 graphiques à la
+ce briefing ne change rien à cela. Il vous évite d'ouvrir 104 graphiques à la
 main. Les données sont des données Yahoo retardées, jamais du temps réel.
 
 `${CLAUDE_SKILL_DIR}` ci-dessous est le dossier de ce skill (là où vit ce
@@ -38,7 +38,7 @@ python3 "${CLAUDE_SKILL_DIR}/fx.py" brief --no-cache         # ignore le cache d
 python3 "${CLAUDE_SKILL_DIR}/fx.py" brief --json             # JSON complet sur la sortie standard
 python3 "${CLAUDE_SKILL_DIR}/fx.py" brief --now "2026-11-13 07:00"   # fige l'heure (New York), pour les essais
 python3 "${CLAUDE_SKILL_DIR}/fx.py" page                     # trader/fx/briefing.json -> trader/fx/briefing.html
-python3 "${CLAUDE_SKILL_DIR}/fx.py" page --in PATH --out PATH
+python3 "${CLAUDE_SKILL_DIR}/fx.py" page --in PATH --out PATH   # défauts : --in trader/fx/briefing.json, --out trader/fx/briefing.html
 ```
 
 Options de `brief` : `--list FILE` (répétable ; par défaut les trois listes
@@ -67,9 +67,10 @@ aucun `briefing.json` n'est écrit.
   pour les 7 paires majeures. query2 d'abord, query1 en repli.
 - Les prix Yahoo sont des prix de référence. Le prix de votre courtier CFD
   diffère (spread, financement, écart de cotation).
-- Un briefing complet à froid prend de 60 à 90 secondes (un appel par symbole,
-  avec une courte pause). Avec le cache, un second passage est quasi immédiat.
-- Résultat partiel dit partiel : « Reçus : 104 sur 105 », avec la liste des
+- Un briefing complet à froid prend environ 30 secondes (mesuré à 31 s le
+  2026-11-14 pour 104 symboles, avec 3 requêtes en parallèle ; environ 85 s en
+  séquentiel). Avec le cache, un second passage est quasi immédiat.
+- Résultat partiel dit partiel : « Reçus : N sur M (k en échec) », avec la liste des
   échecs et leur raison. Un symbole avec moins de 30 séances complètes est
   exclu de l'analyse et compté à part.
 - Le calendrier vient d'un flux public non officiel (`nfs.faireconomy.media`).
@@ -79,7 +80,9 @@ aucun `briefing.json` n'est écrit.
   publié que plus tard dans la semaine : un statut `partial` avec « pas encore
   publié » est normal en fin de semaine.
 - `zoneinfo` a besoin du paquet `tzdata` sous Windows si les fuseaux horaires
-  manquent : `pip install tzdata`. Cela fonctionne sur cette machine.
+  manquent : `pip install tzdata`. Sans lui, `fx.py` échoue dès l'import avec
+  une trace d'erreur Python, pas avec un message d'une ligne et un code de
+  sortie 1.
 
 ## Le briefing
 
@@ -88,7 +91,7 @@ aucun `briefing.json` n'est écrit.
 | état et comptes | marché ouvert ou fermé (week-end : du vendredi 17:00 au dimanche 17:00, heure de New York), heure Paris et New York, symboles demandés, reçus, analysés, échecs |
 | force des devises | score par devise sur 1, 5 et 20 séances, calculé sur les paires reçues ; la meilleure et la pire sur 5 séances sont dites dans le résumé |
 | calendrier | annonces de la semaine, à fort impact dans les prochaines 24 h, en heure de Paris et de New York |
-| setups swing | `breakout_20d`, `bull_flag`, `reclaim_ma20`, `oversold`, `oversold_bounce` avec RSI, ATR en % du prix et tendance, par famille (forex, matières premières, indices) ; le message de corrélation dit combien de signaux forex partagent une devise (par exemple : 18 des 23 signaux concernent le dollar : signaux corrélés, pas indépendants) |
+| setups swing | `breakout_20d`, `bull_flag`, `reclaim_ma20`, `oversold`, `oversold_bounce` avec RSI, ATR en % du prix et tendance, par famille (forex, matières premières, indices) ; le message de corrélation dit combien de signaux forex partagent une devise (par exemple « 6 des 9 signaux forex concernent le dollar (USD) : signaux corrélés, pas indépendants ») |
 | plan du jour | sessions Tokyo, Londres, New York ; niveaux par symbole : plus haut et plus bas de la veille, de la semaine précédente, de 20 jours, plage de la session asiatique (00:00 à 07:00 UTC) et plus haut/bas du jour |
 | avertissements | marché fermé, symboles exclus, calendrier partiel, cache périmé utilisé après un échec (âge affiché) |
 
@@ -147,9 +150,6 @@ Avertissements. Thème clair et sombre, largeur mobile.
   sur les paires.
 - Flux de calendrier non officiel, Yahoo non officiel : l'un ou l'autre peut
   changer de format ou disparaître.
-- Un symbole peut ne revenir qu'avec une seule barre (c'est le cas de
-  `USDCNH=X` lors de l'essai du 2026-11-14) : il est alors exclu de l'analyse et
-  compté.
 
 ## Ce qu'il ne fait jamais
 

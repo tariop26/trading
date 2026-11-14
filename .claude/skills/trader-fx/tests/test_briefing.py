@@ -3,6 +3,8 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -360,6 +362,24 @@ class TestMain(unittest.TestCase):
         self.assertEqual(kw2["ttl_s"], data.TTL_INTRADAY)
         self.assertEqual(kw1["cache_dir"], "trader/fx/cache")
         self.assertTrue(kw1["use_cache"])
+
+    def test_workers_3_is_passed_for_daily_and_hourly(self):
+        rec = Recorder(all_breakouts())
+        run_main(self.argv(), rec.deps())
+        self.assertEqual([c[3]["workers"] for c in rec.calls], [3, 3])
+
+    def test_piped_stdout_is_utf8(self):
+        """Subprocess with stdout piped: `brief --now yesterday` prints one accented
+        line ("doit être au format") and exits 1 before any network call."""
+        script = os.path.join(os.path.dirname(HERE), "fx.py")
+        env = dict(os.environ)
+        env.pop("PYTHONIOENCODING", None)
+        env.pop("PYTHONUTF8", None)
+        r = subprocess.run([sys.executable, script, "brief", "--now", "yesterday"],
+                           capture_output=True, env=env, cwd=self.tmp.name)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("être".encode("utf-8"), r.stdout)
+        self.assertIn("être", r.stdout.decode("utf-8"))
 
     def test_no_cache_flag_is_passed_down(self):
         rec = Recorder(all_breakouts())
