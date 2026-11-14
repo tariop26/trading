@@ -54,6 +54,32 @@ def find_setups(closes):
                   "run_pct": run * 100, "range5_pct": rng5 * 100}
 
 
+def find_short_setups(closes):
+    """Bearish mirror of find_setups. closes (oldest first, >= 30) -> (setup keys, numbers)."""
+    c = closes
+    last = c[-1]
+    low20 = min(c[-21:-1])
+    ma20 = sum(c[-20:]) / 20.0
+    ma20_prev = sum(c[-21:-1]) / 20.0
+    run = c[-6] / c[-16] - 1
+    rng5 = (max(c[-5:]) - min(c[-5:])) / last
+    r = rsi(c)
+    r_prev = rsi(c[:-1])
+    tags = []
+    if last < low20:
+        tags.append("breakdown_20d")
+    if run < -0.10 and rng5 < 0.05:
+        tags.append("bear_flag")
+    if c[-2] > ma20_prev and last < ma20:
+        tags.append("lose_ma20")
+    if r is not None and r > 70:
+        tags.append("overbought")
+    if r_prev is not None and r_prev > 70 and last < c[-2]:
+        tags.append("overbought_reject")
+    return tags, {"rsi": r, "rsi_prev": r_prev, "low20": low20, "ma20": ma20,
+                  "run_pct": run * 100, "range5_pct": rng5 * 100}
+
+
 # ---------------------------------------------------------------- daily bars
 
 def _local_date(now_utc, gmtoffset):
@@ -172,6 +198,7 @@ def analyze(symbol, name, daily, now_utc):
     last = closes[-1]
     a = atr(bars)
     tags, _ = find_setups(closes)
+    short_tags, _ = find_short_setups(closes)
     return {
         "symbol": symbol,
         "name": name,
@@ -180,6 +207,7 @@ def analyze(symbol, name, daily, now_utc):
         "atr_pct": (a / last * 100.0) if (a is not None and last) else None,
         "trend": trend(closes),
         "setups": tags,
+        "setups_short": short_tags,
         "levels": levels(bars, _local_date(now_utc, daily.gmtoffset)),
         "last_bar_date": bars[-1][0].isoformat(),
     }

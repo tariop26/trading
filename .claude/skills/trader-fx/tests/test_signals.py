@@ -67,6 +67,56 @@ class TestFindSetups(unittest.TestCase):
         self.assertEqual(signals.rsi(self.series()[3]), scan.rsi(self.series()[3]))
 
 
+class TestFindShortSetups(unittest.TestCase):
+    def tags(self, closes):
+        return signals.find_short_setups(closes)[0]
+
+    def test_breakdown_20d(self):
+        closes = [100.0 + (i % 3) * 0.2 for i in range(29)] + [90.0]
+        self.assertIn("breakdown_20d", self.tags(closes))
+        # equal to the 20-day low is not a breakdown
+        flat = [100.0 + (i % 3) * 0.2 for i in range(30)]
+        self.assertNotIn("breakdown_20d", self.tags(flat))
+
+    def test_bear_flag(self):
+        closes = [100.0 - i * 1.5 for i in range(25)] + [64.0, 64.5, 64.2, 64.6, 64.3]
+        tags, nums = signals.find_short_setups(closes)
+        self.assertIn("bear_flag", tags)
+        self.assertLess(nums["run_pct"], -10)
+        self.assertLess(nums["range5_pct"], 5)
+
+    def test_lose_ma20(self):
+        closes = [100.0] * 28 + [101.0, 99.0]
+        self.assertIn("lose_ma20", self.tags(closes))
+
+    def test_overbought(self):
+        closes = [100.0 + i for i in range(30)]
+        self.assertIn("overbought", self.tags(closes))
+
+    def test_overbought_reject(self):
+        closes = [100.0 + i for i in range(29)] + [127.5]
+        tags, nums = signals.find_short_setups(closes)
+        self.assertGreater(nums["rsi_prev"], 70)
+        self.assertIn("overbought_reject", tags)
+
+    def test_no_short_tags_on_a_steadily_rising_series_except_overbought(self):
+        closes = [100.0 + i for i in range(30)]
+        self.assertEqual(self.tags(closes), ["overbought"])
+
+    def test_numbers_keys_and_tag_order(self):
+        closes = [100.0 + i for i in range(29)] + [127.5]
+        tags, nums = signals.find_short_setups(closes)
+        self.assertEqual(set(nums), {"rsi", "rsi_prev", "low20", "ma20", "run_pct", "range5_pct"})
+        self.assertEqual(nums["low20"], min(closes[-21:-1]))
+        self.assertEqual(tags, ["overbought", "overbought_reject"])
+
+    def test_find_setups_is_unchanged(self):
+        # long-side keys never leak into the short rules, and find_setups keeps its numbers
+        closes = [100.0 + i for i in range(30)]
+        self.assertIn("high20", signals.find_setups(closes)[1])
+        self.assertNotIn("high20", signals.find_short_setups(closes)[1])
+
+
 class TestCompleteDaily(unittest.TestCase):
     def bars(self):
         return [(ts(2026, 11, 11), 1.0, 1.2, 0.9, 1.1),
@@ -262,13 +312,23 @@ class TestAnalyze(unittest.TestCase):
         s = data.Series(bars=flat_bars(30, start=date(2026, 10, 1)), gmtoffset=0)
         r = signals.analyze("EURUSD=X", "EUR/USD", s, utc(2026, 11, 5))
         self.assertEqual(set(r), {"symbol", "name", "last", "rsi", "atr_pct", "trend",
-                                  "setups", "levels", "last_bar_date"})
+                                  "setups", "setups_short", "levels",
+                                  "last_bar_date"})
         self.assertEqual(r["symbol"], "EURUSD=X")
         self.assertEqual(r["last"], 1.0)
         self.assertAlmostEqual(r["atr_pct"], 100.0)
         self.assertIsNone(r["trend"])
         self.assertEqual(r["last_bar_date"], "2026-10-30")
         self.assertEqual(r["setups"], [])
+        # a flat series has no losses, so Wilder's RSI is 100: only the state tag can show
+        self.assertLessEqual(set(r["setups_short"]), {"overbought"})
+
+    def test_analyze_carries_setups_short(self):
+        bars = [(ts(2026, 10, 1) + i * DAY, c, c + 0.5, c - 0.5, c)
+                for i, c in enumerate([100.0 + (i % 3) * 0.2 for i in range(29)] + [90.0])]
+        s = data.Series(bars=bars, gmtoffset=0)
+        r = signals.analyze("EURUSD=X", "EUR/USD", s, utc(2026, 11, 5))
+        self.assertIn("breakdown_20d", r["setups_short"])
 
     def test_analyze_real_fixture_never_counts_partial_bar(self):
         with open(os.path.join(FIX, "eurusd_1d.json"), encoding="utf-8") as f:
