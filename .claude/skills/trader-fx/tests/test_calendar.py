@@ -181,6 +181,58 @@ class FetchTest(unittest.TestCase):
             self.assertEqual(r["status"], "unavailable", body)
             self.assertEqual(r["events"], [])
 
+    def test_fetch_this_week_empty_list_gives_unavailable_with_reason(self):
+        net = Net({cal.URL_THIS: "[]", cal.URL_NEXT: THIS})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["status"], "unavailable")
+        self.assertEqual(r["events"], [])
+        self.assertTrue(r["reason"])
+        self.assertIn("this week", r["reason"])
+
+    def test_fetch_this_week_all_malformed_gives_unavailable(self):
+        body = json.dumps([{"title": "x", "country": "USD"},
+                           raw(date="2026-11-10T08:30:00"), {"foo": 1}])
+        net = Net({cal.URL_THIS: body, cal.URL_NEXT: THIS})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["status"], "unavailable")
+        self.assertEqual(r["events"], [])
+        self.assertIn("parsed to 0 events", r["reason"])
+
+    def test_fetch_this_week_dict_body_gives_unavailable(self):
+        net = Net({cal.URL_THIS: json.dumps({"events": []}), cal.URL_NEXT: THIS})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["status"], "unavailable")
+        self.assertTrue(r["reason"])
+
+    def test_fetch_this_week_http_error_reason(self):
+        net = Net({cal.URL_THIS: http_error(500), cal.URL_NEXT: THIS})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["reason"], "this week: HTTP 500")
+
+    def test_fetch_reason_is_none_when_ok(self):
+        net = Net({cal.URL_THIS: THIS, cal.URL_NEXT: THIS})
+        self.assertIsNone(cal.fetch_calendar(http_get=net)["reason"])
+
+    def test_fetch_next_week_404_reason_mentions_next_week_and_code(self):
+        net = Net({cal.URL_THIS: THIS, cal.URL_NEXT: http_error(404)})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["status"], "partial")
+        self.assertIn("next week", r["reason"])
+        self.assertIn("404", r["reason"])
+
+    def test_fetch_next_week_empty_list_gives_partial(self):
+        net = Net({cal.URL_THIS: THIS, cal.URL_NEXT: "[]"})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["status"], "partial")
+        self.assertEqual(len(r["events"]), 1)
+        self.assertIn("next week", r["reason"])
+
+    def test_fetch_next_week_all_malformed_gives_partial(self):
+        net = Net({cal.URL_THIS: THIS, cal.URL_NEXT: json.dumps([{"foo": 1}])})
+        r = cal.fetch_calendar(http_get=net)
+        self.assertEqual(r["status"], "partial")
+        self.assertIn("parsed to 0 events", r["reason"])
+
     def test_fetch_events_sorted_by_time(self):
         later = json.dumps([raw(title="later", date="2026-11-17T08:30:00-05:00")])
         earlier = json.dumps([raw(title="earlier", date="2026-11-10T08:30:00-05:00")])

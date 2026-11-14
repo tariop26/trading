@@ -81,13 +81,15 @@ def filter_events(events, currencies, impacts=("High",)):
 
 
 def within_hours(events, start_utc, hours=24):
-    """Events with start <= time < start + hours."""
+    """Events with start <= time < start + hours. start_utc must be timezone-aware."""
     end = start_utc + timedelta(hours=hours)
     return [e for e in events if start_utc <= datetime.fromisoformat(e["utc"]) < end]
 
 
 def _load(url, http_get):
-    """-> (events, None) or (None, reason). Never raises."""
+    """-> (events, None) on success, (None, reason) otherwise. Never raises.
+    A body that is not a list, an empty list, or a list that parses to zero
+    events is a failure: a changed feed must not look like a quiet week."""
     try:
         doc = json.loads(http_get(url))
     except urllib.error.HTTPError as e:
@@ -96,21 +98,31 @@ def _load(url, http_get):
         return None, "%s: %s" % (type(e).__name__, e)
     if not isinstance(doc, list):
         return None, "unexpected feed format"
-    return parse_events(doc), None
+    if not doc:
+        return None, "empty feed"
+    events = parse_events(doc)
+    if not events:
+        return None, "feed parsed to 0 events of %d" % len(doc)
+    return events, None
 
 
 def fetch_calendar(*, http_get=None):
-    """-> {"status": "ok"|"partial"|"unavailable", "events": [...]} sorted by time.
-    This week failing gives unavailable; next week missing (404 means not yet
-    published) or failing gives partial."""
+    """-> {"status": "ok"|"partial"|"unavailable", "events": [...], "reason": str|None},
+    events sorted by time. This week failing (any kind, including an empty or
+    unparseable feed) gives unavailable; next week failing in any way (404 means
+    not yet published) gives partial. `reason` is None when status is "ok"."""
     get = http_get or _http_get
-    this_week, _ = _load(URL_THIS, get)
+    this_week, why = _load(URL_THIS, get)
     if this_week is None:
-        return {"status": "unavailable", "events": []}
-    next_week, _ = _load(URL_NEXT, get)
-    events = this_week + (next_week or [])
-    events.sort(key=lambda e: e["utc"])
-    return {"status": "ok" if next_week is not None else "partial", "events": events}
+        return {"status": "unavailable", "events": [], "reason": "this week: " + why}
+    next_week, why = _load(URL_NEXT, get)
+    if next_week is None:
+        if why == "HTTP 404":
+            why = "pas encore publié (HTTP 404)"
+        return {"status": "partial", "events": sorted(this_week, key=lambda e: e["utc"]),
+                "reason": "next week: " + why}
+    return {"status": "ok", "events": sorted(this_week + next_week, key=lambda e: e["utc"]),
+            "reason": None}
 
 
 def focus_currencies(symbols):
