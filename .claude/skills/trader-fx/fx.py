@@ -3,7 +3,7 @@
 
 Run from the repo root (paths are relative to the working directory):
     python3 .claude/skills/trader-fx/fx.py brief [--list FILE ...] [--no-cache]
-        [--json] [--now "YYYY-MM-DD HH:MM"] [--out PATH]
+        [--json] [--now "YYYY-MM-DD HH:MM"] [--out PATH] [--config PATH]
 
     python3 .claude/skills/trader-fx/fx.py page [--in PATH] [--out PATH]
 
@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import briefing  # noqa: E402
+import config as fxconfig  # noqa: E402
 import data  # noqa: E402
 import economic_calendar  # noqa: E402
 import page  # noqa: E402
@@ -30,6 +31,7 @@ NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_LISTS = ("trader/lists/fx_pairs.txt", "trader/lists/commodities.txt",
                  "trader/lists/indices.txt")
 DEFAULT_OUT = "trader/fx/briefing.json"
+DEFAULT_CONFIG = "trader/fx/config.json"
 DEFAULT_PAGE = "trader/fx/briefing.html"
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report_template.html")
 CACHE_DIR = "trader/fx/cache"
@@ -53,6 +55,9 @@ def build_parser():
                    help="JSON sur la sortie standard au lieu du résumé")
     b.add_argument("--now", help='heure de New York "YYYY-MM-DD HH:MM" (tests)')
     b.add_argument("--out", default=DEFAULT_OUT, help="fichier briefing.json")
+    b.add_argument("--config", default=DEFAULT_CONFIG, metavar="PATH",
+                   help="configuration des idées de trade (défaut : %s ; absent = valeurs "
+                        "par défaut)" % DEFAULT_CONFIG)
     g = sub.add_parser("page", help="écrit la page HTML à partir de briefing.json")
     g.add_argument("--in", dest="inp", default=DEFAULT_OUT, help="fichier briefing.json")
     g.add_argument("--out", default=DEFAULT_PAGE, help="fichier HTML")
@@ -76,6 +81,11 @@ def cmd_brief(args, deps):
     else:
         now_utc = datetime.now(timezone.utc)
 
+    try:                      # before the lists and any network call
+        cfg = fxconfig.load_config(args.config)
+    except fxconfig.ConfigError as e:
+        return _fail(str(e))
+
     universe, seen = [], set()
     for path in args.lists or DEFAULT_LISTS:
         try:
@@ -98,7 +108,7 @@ def cmd_brief(args, deps):
                      % len(universe))
 
     analyses = briefing.analyze_universe(universe, daily, now_utc)
-    hits = [a for a in analyses if a["setups"]]
+    hits = [a for a in analyses if briefing.has_setup(a)]
     analysed = {a["symbol"] for a in analyses}
     alert = [s for s in briefing.alert_symbols(hits) if s in analysed]
     hourly, extra = {}, []
@@ -113,7 +123,7 @@ def cmd_brief(args, deps):
 
     calendar = fetch_calendar()
     b = briefing.build_briefing(universe, daily, failed, hourly, calendar, now_utc,
-                                extra_warnings=extra)
+                                extra_warnings=extra, config=cfg)
 
     try:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)

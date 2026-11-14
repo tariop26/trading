@@ -4,8 +4,11 @@ build_briefing() is pure: bars, a calendar and a clock go in, a plain dict comes
 out. Nothing here reads the network, the disk or the real clock.
 """
 from datetime import timezone
+from decimal import Decimal
 
+import config as fxconfig
 import economic_calendar
+import plan
 import sessions
 import signals
 import strength
@@ -21,6 +24,8 @@ LIST_LIMIT = 10          # symbols named in one warning
 CAL_LINES = 5            # events shown in the summary
 WARN_LINES = 4           # warnings shown in the summary
 LINE_CHARS = 150
+IDEA_LINES = 8           # lines reserved for the trade ideas block
+IDEA_ROWS = IDEA_LINES - 2   # idea lines that fit besides the header and the risk line
 
 FAMILIES = (("forex", "Forex"), ("commodities", "Matières premières"),
             ("indices", "Indices"))
@@ -81,9 +86,16 @@ def family(symbol):
 
 # ---------------------------------------------------------------- build
 
+def has_setup(a):
+    """True when the analysis matched a rule on either side (long or short)."""
+    return bool(a["setups"] or a.get("setups_short"))
+
+
 def _hit(a):
-    return {k: a[k] for k in ("symbol", "name", "last", "rsi", "atr_pct", "trend",
-                              "setups", "last_bar_date")}
+    out = {k: a[k] for k in ("symbol", "name", "last", "rsi", "atr_pct", "trend",
+                             "setups", "last_bar_date")}
+    out["setups_short"] = list(a.get("setups_short") or [])
+    return out
 
 
 def join_names(symbols):
@@ -97,7 +109,11 @@ def _hours(seconds):
     return "%.1f" % (seconds / 3600.0)
 
 
-def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_warnings=()):
+def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_warnings=(),
+                   config=None):
+    """`config` is a validated configuration dict (see config.load_config); None
+    means the defaults."""
+    cfg = fxconfig.defaults() if config is None else config
     if now_utc.tzinfo is None or now_utc.utcoffset() is None:
         raise ValueError("now_utc must be timezone-aware")
     now_utc = now_utc.astimezone(timezone.utc)
@@ -105,7 +121,7 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
     errors = []
     analyses = analyze_universe(universe, daily, now_utc, errors)
     by_symbol = {a["symbol"]: a for a in analyses}
-    hits = [_hit(a) for a in analyses if a["setups"]]
+    hits = [_hit(a) for a in analyses if has_setup(a)]
     last_bar = max((a["last_bar_date"] for a in analyses), default=None)
     warnings = []
 
@@ -185,6 +201,7 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
         "strength": {"windows": windows},
         "swing": {"hits": hits, "clusters": strength.clusters(hits)},
         "day_plan": {"sessions": table, "levels": levels, "events_24h": events_24h},
+        "trade_ideas": plan.build_trade_ideas(analyses, cfg),
         "warnings": warnings,
         "disclaimer": DISCLAIMER,
     }
@@ -225,6 +242,52 @@ def _calendar_lines(b):
     return out
 
 
+def _price(v):
+    """A price with the precision of its JSON value, never in scientific notation."""
+    text = repr(float(v))
+    if "e" in text or "E" in text:
+        text = format(Decimal(text), "f")
+    return text
+
+
+def _size_text(size):
+    """(size words, whether the risk is shown) for one idea line."""
+    if size["status"] == "too_wide":
+        return "stop trop large", False
+    if size["status"] != "ok":
+        return "taille à confirmer", False
+    if size.get("lots") is not None:
+        return "%.2f lot" % size["lots"], True
+    return "taille %s" % _price(size["size"]), True
+
+
+def _idea_line(idea):
+    words, with_risk = _size_text(idea["size"])
+    text = "  %d. %s %s  entrée %s  stop %s  cible %s  %s" % (
+        idea["rank"], idea["symbol"], idea["side"], _price(idea["reference_price"]),
+        _price(idea["stop"]), _price(idea["target"]), words)
+    if with_risk:
+        text += "  risque %.2f USD" % idea["size"]["risk_usd"]
+    return _cut(text)
+
+
+def _idea_lines(b):
+    """The trade ideas block: IDEA_LINES lines at most, risk line always kept."""
+    ti = b["trade_ideas"]
+    ideas = ti["ideas"]
+    if not ideas:
+        return ["Idées de trade : aucune"]
+    out = ["Idées de trade (%d), plan mécanique à valider :" % len(ideas)]
+    shown = ideas if len(ideas) <= IDEA_ROWS else ideas[:IDEA_ROWS - 1]
+    out += [_idea_line(i) for i in shown]
+    if len(shown) < len(ideas):
+        out.append("  ... et %d autres (voir briefing.json)" % (len(ideas) - len(shown)))
+    out.append(_cut("  Risque cumulé : %.2f USD (%.2f %%) sur %s %% autorisés%s" % (
+        ti["total_risk_usd"], ti["total_risk_pct"], str(float(ti["max_total_pct"])),
+        " : dépassé" if ti["over_cap"] else "")))
+    return out
+
+
 def _warning_lines(b):
     w = b["warnings"]
     if not w:
@@ -249,7 +312,8 @@ def _hit_line(h):
     return _cut("  %s%s  RSI %s  ATR %s  tendance %s : %s" % (
         h["symbol"], "" if h["name"] == h["symbol"] else " " + h["name"],
         _num(h["rsi"], "%.0f"), _num(h["atr_pct"], "%.2f %%"),
-        h["trend"] if h["trend"] else "n/a", ", ".join(h["setups"])))
+        h["trend"] if h["trend"] else "n/a",
+        ", ".join(h["setups"] + h.get("setups_short", []))))
 
 
 def _hit_lines(b, budget):
@@ -296,6 +360,7 @@ def render_summary(b):
         head.append(_cut("Échecs : " + join_names([f["symbol"] for f in c["failed"]])))
     head.append(_strength_line(b))
     head += _calendar_lines(b)
+    head += _idea_lines(b)
     tail = _warning_lines(b) + [b["disclaimer"]]
     lines = head + _hit_lines(b, MAX_LINES - len(head) - len(tail)) + tail
     return "\n".join(lines[:MAX_LINES])
