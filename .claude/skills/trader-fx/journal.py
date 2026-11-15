@@ -13,6 +13,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -333,6 +334,62 @@ def build_alerts(journal, now_utc):
     return {"v": 1, "updated": _iso(now_utc), "rules": rules}
 
 
+ALERTS_COMMIT_MESSAGE = "alerts: règles de stop et de cible"
+
+
+def default_run_git(args):
+    """(exit code, standard output) of `git <args>`; (127, "") when git is not installed."""
+    try:
+        done = subprocess.run(["git"] + list(args), capture_output=True, text=True,
+                              encoding="utf-8")
+    except OSError:
+        return 127, ""
+    return done.returncode, done.stdout
+
+
+def publish_alerts(path, *, auto_push, run_git):
+    """Commit and push `path` alone (and only from `main`, the branch the alert server reads).
+
+    Returns the warnings to print: [] when nothing went wrong or when `auto_push` is off.
+    Never raises: a failure here must not undo a trade already saved."""
+    if not auto_push:
+        return []
+
+    def fail(reason):
+        return ["alerts.json non poussé : %s. Poussez-le à la main." % reason]
+
+    code, out = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    if code == 127:
+        return fail("git est introuvable")
+    if code != 0:
+        return fail("dépôt git introuvable")
+    branch = out.strip()
+    if branch != "main":
+        return fail("branche courante %s, pas main" % branch)
+    code, out = run_git(["status", "--porcelain", "--", path])
+    if code != 0:
+        return fail("git status a échoué")
+    if not out.strip():
+        return []
+    for args, reason in ((["add", "--", path], "git add a échoué"),
+                         (["commit", "-m", ALERTS_COMMIT_MESSAGE, "--", path], "git commit a échoué"),
+                         (["push"], "git push a échoué")):
+        if run_git(args)[0] != 0:
+            return fail(reason)
+    return []
+
+
+def _refresh_alerts(args, doc, cfg, deps):
+    """Rewrite alerts.json after a saved change, publish it when asked; -> warnings to print."""
+    path = args.alerts or os.path.join(os.path.dirname(args.journal), "alerts.json")
+    try:
+        write_json_atomic(path, build_alerts(doc, deps["now"]()))
+    except JournalError as e:
+        return ["alerts.json non écrit : %s" % e]
+    return publish_alerts(path, auto_push=cfg["alerts"]["auto_push"],
+                          run_git=deps.get("run_git", default_run_git))
+
+
 # ---------------------------------------------------------------- command line
 
 DEFAULT_JOURNAL = "trader/fx/journal.json"
@@ -370,12 +427,14 @@ def build_parser():
     o.add_argument("--quote-usd-rate", type=float,
                    help="valeur en USD d'une unité de la devise de cotation (paire croisée)")
     o.add_argument("--briefing", default=DEFAULT_BRIEFING, help="briefing.json des idées")
+    o.add_argument("--alerts", help="alerts.json à réécrire (défaut : à côté du journal)")
 
     a = sub.add_parser("amend", parents=[common], help="déplace le stop ou la cible")
     a.add_argument("id")
     a.add_argument("--stop", type=float)
     a.add_argument("--target", type=float)
     a.add_argument("--time")
+    a.add_argument("--alerts", help="alerts.json à réécrire (défaut : à côté du journal)")
 
     c = sub.add_parser("close", parents=[common], help="clôture un trade")
     c.add_argument("id")
@@ -386,6 +445,7 @@ def build_parser():
     c.add_argument("--note")
     c.add_argument("--time")
     c.add_argument("--quote-usd-rate", type=float)
+    c.add_argument("--alerts", help="alerts.json à réécrire (défaut : à côté du journal)")
 
     ls = sub.add_parser("list", parents=[common], help="liste les trades")
     ls.add_argument("--open", action="store_true", dest="only_open")
@@ -497,12 +557,15 @@ def cmd_open(args, deps):
     print("Trade ouvert : %s, %s %s à %s, stop %s, cible %s, %s (%s)."
           % (trade["id"], symbol, args.side, _level(symbol, args.price), _level(symbol, trade["stop"]),
              target, risk, "idée du briefing" if idea else "hors plan"))
+    for warning in _refresh_alerts(args, doc, cfg, deps):
+        print(warning)
     return 0
 
 
 def cmd_amend(args, deps):
     when = _parse_time(args.time, deps["now"]())
     doc = load_journal(args.journal)
+    cfg = _load_config(args)
     trade = find_trade(doc, args.id)
     tagged = "stop_deplace" in trade["tags"]
     amend_trade(doc, args.id, when_utc=when, stop=args.stop, target=args.target)
@@ -512,6 +575,8 @@ def cmd_amend(args, deps):
     target = _level(sym, trade["target"]) if trade["target"] is not None else "aucune"
     print("Trade modifié : %s, stop %s, cible %s.%s" % (trade["id"], _level(sym, trade["stop"]),
                                                         target, extra))
+    for warning in _refresh_alerts(args, doc, cfg, deps):
+        print(warning)
     return 0
 
 
@@ -528,6 +593,8 @@ def cmd_close(args, deps):
                 note=args.note or "")
     save_journal(args.journal, doc)
     print("Trade clôturé : %s, %s." % (trade["id"], _result_text(trade)))
+    for warning in _refresh_alerts(args, doc, cfg, deps):
+        print(warning)
     return 0
 
 
