@@ -14,6 +14,7 @@ Ce que l'utilisateur a dit :
 - Trois alertes, toutes voulues : stop touché, cible touchée, annonce à fort impact 30 minutes avant (seulement pour les devises de ses trades ouverts).
 - Il veut aussi des alertes d'**idées de trade** (« trades à prendre »). Il a choisi de **tester la lecture 1** : relancer le briefing existant en séance et annoncer les nouvelles idées. Une idée est un plan mécanique à valider : les messages ne disent jamais « à prendre », achat, vente, ni aucun conseil.
 - Le choix de prendre ou non une idée reste le sien.
+- Il ne veut pas pousser `alerts.json` à la main à chaque changement de trade : `journal.py` le fait seul, après son accord explicite, pour ce seul fichier (niveaux, sans résultat).
 
 Verdict du test de faisabilité (workflow `Probe sources`, lancé le 2026-11-15 sur un runner `ubuntu-latest`, Python 3.14.4) : Yahoo répond sur les deux hôtes (6 sondes sur 6, barres 1 h), le calendrier économique répond (119 événements), Telegram répond 200. Aucune dépendance ne bloque.
 
@@ -24,6 +25,7 @@ Critères de réussite :
 4. Le coût reste sous 2 000 minutes Actions par mois (forfait gratuit, dépôt privé).
 5. `--dry-run` montre exactement les messages sans rien envoyer ni mémoriser.
 6. Un essai en direct fait arriver un vrai message sur le Telegram de l'utilisateur.
+7. Après un `open`, un `amend` ou un `close`, le serveur connaît les nouveaux niveaux sans que l'utilisateur pousse quoi que ce soit (option `alerts.auto_push`).
 
 ## 2. Hors périmètre
 
@@ -47,6 +49,8 @@ Fichiers (modules plats dans `.claude/skills/trader-fx/`, un fichier de test par
 | `alert_messages.py` | texte des messages Telegram (français, heure de Paris) | `plan`, `sessions` |
 | `telegram.py` | envoi d'un message, avec nouvelle tentative ; aucune requête réseau si `dry_run` | |
 | `alerts_run.py` | ligne de commande et orchestration d'un lancement | tous les précédents, `fx`, `config` |
+| `journal.py` (modifié) | `open`, `amend` et `close` régénèrent `alerts.json` et, si `alerts.auto_push` est vrai, le commitent et le poussent (3.3) | `config`, `git` (via `subprocess`) |
+| `config.py` (modifié) | nouvelle section facultative `alerts` : `{"auto_push": false}` | |
 
 Supprimés : `.github/workflows/probe.yml` et `probe/probe.py` (le test de faisabilité jetable).
 
@@ -67,7 +71,14 @@ Sans lui, une barre de 09 h qui a touché un niveau déclencherait une alerte po
 
 ### 3.3 Comment le serveur reçoit les trades
 
-`alerts.json` n'est à jour sur le serveur que si l'utilisateur le commite et le pousse après chaque `open`, `amend` ou `close` (puis `journal.py alerts`). Un trade clôturé mais non poussé continue de déclencher des alertes de stop. `SKILL.md` le dit et l'étape « Journal » propose de lancer `journal.py alerts` après chaque changement ; Claude ne pousse rien sans demande explicite.
+Le serveur lit `trader/fx/alerts.json` dans le dépôt, branche `main`. `journal.py` le tient à jour tout seul :
+
+1. `open`, `amend` et `close` enregistrent d'abord le trade dans `journal.json` (comme aujourd'hui), puis réécrivent `alerts.json` (option `--alerts PATH`, défaut `trader/fx/alerts.json` ; la sous-commande `alerts` reste).
+2. Si `alerts.auto_push` vaut `true` dans `trader/fx/config.json` (défaut `false`), il commite ensuite **ce seul fichier** (`git commit -m "alerts: règles de stop et de cible" -- trader/fx/alerts.json`, sans toucher au reste de l'index ni de l'arbre de travail) et lance `git push`. Il ne pousse jamais `journal.json`, qui contient les résultats de l'utilisateur.
+3. Il ne commite rien si `alerts.json` n'a pas changé. Il ne pousse que si la branche courante est `main` ; sinon il le dit.
+4. Un échec après l'enregistrement du trade (dépôt git absent, pas de réseau, identifiants refusés, branche autre que `main`, push rejeté) n'annule rien : la confirmation du trade s'affiche, suivie d'une ligne « alerts.json non poussé : <raison>. Poussez-le à la main. », et le code de sortie reste 0.
+
+Sans `auto_push`, `alerts.json` est tout de même régénéré mais reste local : l'utilisateur doit le pousser lui-même, et un trade clôturé non poussé continue de déclencher des alertes de stop. `SKILL.md` le dit.
 
 ## 4. Les vérifications
 
@@ -123,13 +134,14 @@ Environ 56 lancements par jour ouvré (4 par heure, 14 heures), au moins une min
 - `telegram` : succès ; nouvelle tentative sur 429 et 5xx ; échec final ; le token n'apparaît dans aucune sortie ; `dry_run` sans réseau.
 - `alerts_run` : orchestration complète avec fausses sources ; envoi puis marquage ; échec d'envoi non marqué et code de sortie 1 ; `alerts.json` invalide sans arrêt des idées ; `--dry-run` sans état écrit ni envoi ; secret de configuration écrit et jamais affiché.
 - `journal` : `since` présent dans les règles (ouverture, stop déplacé, cible déplacée), et `alerts.json` sans champ financier.
+- `journal` et `config` (envoi automatique, `git` simulé par un exécuteur injecté, jamais de vrai dépôt ni de réseau) : `alerts.json` régénéré après `open`, `amend` et `close` ; `auto_push` à `false` ou absent : aucun appel à git ; `true` : un seul commit limité au fichier puis un push ; pas de commit si le fichier n'a pas changé ; branche autre que `main` : pas de push et une ligne d'explication ; échec de commit ou de push : le trade reste enregistré, ligne d'avertissement, code 0 ; `journal.json` jamais ajouté au commit ; section `alerts` de la configuration validée (booléen exigé, clé inconnue refusée).
 - Essai en direct, à part : lancement manuel à blanc, puis vrai lancement avec une règle fictive proche du prix actuel pour voir arriver le message sur Telegram.
 
 ## 9. Fichiers lus et écrits
 
 | fichier | quoi |
 | --- | --- |
-| `trader/fx/alerts.json` | lu par le serveur (règles `id`, `trade_id`, `symbol`, `type`, `side`, `level`, `decimals`, `since`) |
+| `trader/fx/alerts.json` | écrit par `journal.py` après chaque changement de trade (et poussé sur `main` si `alerts.auto_push`), lu par le serveur (règles `id`, `trade_id`, `symbol`, `type`, `side`, `level`, `decimals`, `since`) |
 | `trader/fx/config.json` | écrit sur le runner depuis le secret `TRADER_FX_CONFIG`, jamais commité (déjà ignoré par git) |
 | `alerts_state.json` | état de déduplication, dans le cache d'Actions |
-| `SKILL.md` | section « Serveur d'alertes » : ce que fait chaque lancement, les secrets à créer, comment lancer à blanc, la règle de pousser `alerts.json` |
+| `SKILL.md` | section « Serveur d'alertes » : ce que fait chaque lancement, les secrets à créer, comment lancer à blanc, `alerts.auto_push` et ce qui se passe quand il est faux |
