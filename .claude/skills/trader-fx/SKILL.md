@@ -18,13 +18,16 @@ description: >-
   réellement pris (entrée, taille, stop, cible, clôture), leur résultat en USD
   et en R, des statistiques honnêtes (avec leur nombre de trades), les règles
   de stop et de cible des trades ouverts (alerts.json) et une page « Journal
-  de trading ». Use when the user says "briefing forex", "scan
+  de trading ». Un serveur d'alertes sur GitHub Actions surveille les stops et
+  les cibles, annonce les annonces à fort impact et les idées de trade en
+  formation, et écrit sur Telegram. Use when the user says "briefing forex", "scan
   forex", "force des devises", "calendrier économique", "matières premières",
   "indices", "briefing CFD", "trades potentiels", "taille de position", "idées
   de trade", "journal de trading", "statistiques de trades", "j'ai pris
   l'idée", "forex briefing", "currency strength", "economic calendar", "what
   is moving in forex", "commodities and indices scan", "trade ideas", "position
-  size", "lot size", "trading journal", "trade stats", or at the start of a
+  size", "lot size", "trading journal", "trade stats", "serveur d'alertes", "alertes Telegram",
+  "alert server", "Telegram alerts", or at the start of a
   forex / CFD trading day.
 argument-hint: "[brief | page] [--list FILE] [--no-cache] [--json] [--config PATH] ; journal.py [open | amend | close | list | stats | alerts | page]"
 ---
@@ -72,7 +75,8 @@ n'est reçu, ou si la configuration est invalide, aucun `briefing.json` n'est
 | `trader/fx/cache/` | cache disque des barres Yahoo : 6 h pour les barres journalières (jamais réutilisé d'un jour UTC à l'autre), 10 min pour les barres 1 h. Ignoré par git |
 | `trader/fx/journal.json` | le journal des trades pris : lu par toutes les sous-commandes de `journal.py`, écrit par `open`, `amend` et `close` (écriture atomique). Contient les résultats de l'utilisateur ; versionné par git |
 | `trader/fx/journal.json.bak` | copie de la version précédente du journal, faite avant chaque écriture de `open`, `amend` et `close`. Ignorée par git |
-| `trader/fx/alerts.json` | écrit par `journal.py alerts` : les niveaux de stop et de cible des trades ouverts, pour le futur serveur d'alertes. Versionné par git |
+| `trader/fx/alerts.json` | écrit par `journal.py` après chaque `open`, `amend` et `close` (et par `journal.py alerts`) : les niveaux de stop et de cible des trades ouverts, avec `since` (depuis quand surveiller) ; poussé sur `main` si `alerts.auto_push` ; lu par le serveur d'alertes. Versionné par git |
+| `trader/fx/alerts_state.json` | écrit par `alerts_run.py` : ce qui a déjà été envoyé (idées du jour, règles déclenchées, annonces, jour de la dernière alerte de panne). Sur GitHub il vit dans le cache d'Actions. Ignoré par git |
 | `trader/fx/journal.html` | écrit par `journal.py page` : page « Journal de trading », données intégrées, aucun appel réseau. Contient les résultats : ignorée par git, à publier en Artifact privé seulement |
 
 `briefing.json` et `briefing.html` sont des sorties du jour, ignorées par git.
@@ -342,6 +346,58 @@ ne contient aucun résultat, aucun capital, aucune taille et aucun risque : seul
 des niveaux. `page` écrit la page « Journal de trading » (Résumé, Trades ouverts,
 Statistiques, Trades clôturés) ; elle contient les résultats de l'utilisateur.
 
+## Serveur d'alertes
+
+`alerts_run.py` est un lancement du serveur ; le workflow `.github/workflows/alerts.yml`
+l'appelle sur GitHub Actions **toutes les 15 minutes, de 07 h à 21 h 45 UTC, du lundi
+au vendredi** (le cron de GitHub est en UTC et peut avoir quelques minutes de retard).
+Il coûte environ 1 200 minutes par mois, sous les 2 000 minutes gratuites d'un dépôt
+privé. Tous les calculs sont en Python, sans appel à Claude. Un lancement :
+
+1. lit `trader/fx/alerts.json` (les règles de stop et de cible des trades ouverts) ;
+2. **stop ou cible touché** : lit les barres de 5 minutes de chaque symbole et compare
+   leur plus haut et leur plus bas au niveau, à partir de `since` (heure d'ouverture
+   du trade ou du dernier déplacement du niveau). Un contact entre deux lancements
+   n'est donc pas manqué. Un message par règle ;
+3. **annonce à fort impact** : si une annonce touche une devise d'un trade ouvert
+   (les deux devises de la paire ; l'USD pour un autre instrument), elle est annoncée
+   quand elle est entre 15 et 30 minutes devant, une seule fois ;
+4. **idées de trade** : relance le briefing et annonce les idées nouvelles (au plus
+   3 par lancement, une fois par jour UTC et par symbole et sens), sauf celles que
+   l'utilisateur tient déjà, les idées caduques, et tout un week-end (briefing
+   `closed_weekend`). Le message dit « idée de trade, en formation, non confirmée à la
+   clôture » : en séance la barre du jour n'est pas finie et l'idée peut disparaître.
+   C'est un plan mécanique à valider, jamais un conseil ;
+5. envoie les messages dans cet ordre : stops et cibles, annonces, idées. Un message
+   n'est mémorisé qu'après la réponse 200 de Telegram ; un échec repart au lancement
+   suivant et le lancement se termine en échec (GitHub peut alors prévenir par e-mail).
+
+Si les barres de 5 minutes sont toutes indisponibles alors qu'il y a des règles, un
+seul message par jour dit « Impossible de vérifier vos stops ».
+
+**Secrets GitHub** (dépôt, Settings, Secrets and variables, Actions) : `TELEGRAM_BOT_TOKEN`
+et `TELEGRAM_CHAT_ID` (obligatoires) ; `TRADER_FX_CONFIG` (facultatif : le contenu de
+`trader/fx/config.json`, pour que les tailles des idées utilisent le vrai capital ;
+sans lui les messages disent « Taille calculée sur le capital par défaut »). Ils ne sont
+jamais affichés. Ne jamais coller un token dans le chat : s'il l'a été, le révoquer avec
+`/revoke` chez `@BotFather`.
+
+**Essai à blanc.** Onglet Actions, workflow « Alerts », Run workflow, case `dry_run` cochée :
+les messages s'affichent dans le journal du lancement, rien n'est envoyé ni mémorisé. En
+local : `python3 "${CLAUDE_SKILL_DIR}/alerts_run.py" --dry-run`.
+
+**Garder `alerts.json` à jour.** `open`, `amend` et `close` réécrivent `alerts.json`. Avec
+`"alerts": {"auto_push": true}` dans `trader/fx/config.json` (défaut `false`), `journal.py`
+le commite seul (ce fichier uniquement, jamais `journal.json`) et le pousse, depuis la
+branche `main` seulement. Sans cela, ou si le push échoue (une ligne « alerts.json non
+poussé : … » le dit), pousser `alerts.json` à la main : sinon le serveur ne voit pas les
+nouveaux niveaux, et un trade clôturé continue de déclencher des alertes de stop.
+
+**Limites.** « Touché » veut dire « vu dans les données Yahoo », retardées, pas « exécuté
+chez le courtier » : le stop réel reste chez le courtier. Le calendrier est un flux non
+officiel. GitHub peut retarder un lancement planifié ; rien ne prévient si le
+planificateur s'arrête. Les idées en séance viennent d'une barre du jour en formation.
+
 ## Étapes pour Claude
 
 1. Lancer `fx.py brief` (sans option, sauf demande de l'utilisateur). Si le
@@ -387,7 +443,10 @@ Statistiques, Trades clôturés) ; elle contient les résultats de l'utilisateur
    dire toujours le nombre de trades derrière chaque chiffre et l'avertissement
    d'échantillon quand il apparaît (moins de 30 trades clôturés : « échantillon
    trop petit pour conclure »). Ne publier `journal.html` en Artifact que si
-   l'utilisateur le demande, en privé : il contient ses résultats.
+   l'utilisateur le demande, en privé : il contient ses résultats. Après chaque
+   `open`, `amend` ou `close`, `alerts.json` est réécrit ; si la sortie dit
+   « alerts.json non poussé », le dire et proposer de le pousser (ne jamais pousser
+   sans que l'utilisateur l'ait demandé ou ait activé `alerts.auto_push`).
 
 ## Règles
 
@@ -480,9 +539,9 @@ Statistiques, Trades clôturés) ; elle contient les résultats de l'utilisateur
   moyennes en R.
 - Journal : l'estimation d'une paire croisée utilise un cours de conversion unique
   (celui du jour, sauf `--quote-usd-rate`), pas celui du moment de la sortie.
-- Journal : `alerts.json` ne contient aucun résultat, mais le journal n'envoie
-  aucune alerte : le serveur qui lira `alerts.json` (GitHub Actions, Telegram) est
-  un autre sous-projet, pas encore écrit.
+- Journal : `alerts.json` ne contient aucun résultat ni capital ; le journal
+  lui-même n'envoie aucune alerte, c'est le serveur d'alertes (voir « Serveur
+  d'alertes »).
 - Tous les chemins sont relatifs au répertoire courant : lancer les commandes
   depuis la racine du dépôt, `C:/Users/m.poirat/TRADING`.
 - Le téléchargement à 3 tâches fait trois requêtes Yahoo simultanées : mettre
@@ -508,6 +567,9 @@ que l'utilisateur ne donne pas est demandé ou reste « inconnu ».
   (`briefing.json` et `briefing.html`). `journal.py` écrit en plus
   `journal.json`, `journal.json.bak`, `alerts.json` et `journal.html`, et ne
   touche jamais au courtier.
+- Le serveur d'alertes lit ses secrets dans l'environnement GitHub et ne les affiche
+  jamais ; les erreurs Telegram ne donnent que le code HTTP. `alerts.auto_push` ne
+  pousse que `alerts.json` (des niveaux, pas de résultats).
 - `journal.json` et `journal.html` contiennent les résultats de l'utilisateur :
   ne pousser le dépôt que vers un dépôt privé, et ne publier la page qu'en
   Artifact privé.

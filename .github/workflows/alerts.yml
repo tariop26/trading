@@ -1,0 +1,54 @@
+# Alert server of trader-fx: stops, targets, announcements and new ideas, sent to Telegram.
+# Runs every 15 minutes from 07:00 to 21:45 UTC, Monday to Friday (GitHub cron is UTC), and by
+# hand from the Actions tab (tick "dry_run" to print the messages without sending anything).
+# The deduplication state lives in the Actions cache; secrets are read through env only.
+name: Alerts
+
+on:
+  schedule:
+    - cron: "*/15 7-21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Afficher les messages sans rien envoyer"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alerts
+  cancel-in-progress: false
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore the alert state
+        uses: actions/cache/restore@v4
+        with:
+          path: trader/fx/alerts_state.json
+          key: alerts-state-${{ github.run_id }}
+          restore-keys: alerts-state-
+      - name: Run the alert server
+        id: run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TRADER_FX_CONFIG: ${{ secrets.TRADER_FX_CONFIG }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 .claude/skills/trader-fx/alerts_run.py --dry-run
+          else
+            python3 .claude/skills/trader-fx/alerts_run.py
+          fi
+      - name: Save the alert state
+        if: ${{ always() && steps.run.outputs.state_changed == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: trader/fx/alerts_state.json
+          key: alerts-state-${{ github.run_id }}
