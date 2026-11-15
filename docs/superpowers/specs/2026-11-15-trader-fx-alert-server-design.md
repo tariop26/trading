@@ -73,7 +73,7 @@ Sans lui, une barre de 09 h qui a touché un niveau déclencherait une alerte po
 
 Le serveur lit `trader/fx/alerts.json` dans le dépôt, branche `main`. `journal.py` le tient à jour tout seul :
 
-1. `open`, `amend` et `close` enregistrent d'abord le trade dans `journal.json` (comme aujourd'hui), puis réécrivent `alerts.json` (option `--alerts PATH`, défaut `trader/fx/alerts.json` ; la sous-commande `alerts` reste).
+1. `open`, `amend` et `close` enregistrent d'abord le trade dans `journal.json` (comme aujourd'hui), puis réécrivent `alerts.json` (option `--alerts PATH`, défaut : `alerts.json` dans le dossier de `--journal`, soit `trader/fx/alerts.json` par défaut ; la sous-commande `alerts` reste).
 2. Si `alerts.auto_push` vaut `true` dans `trader/fx/config.json` (défaut `false`), il commite ensuite **ce seul fichier** (`git commit -m "alerts: règles de stop et de cible" -- trader/fx/alerts.json`, sans toucher au reste de l'index ni de l'arbre de travail) et lance `git push`. Il ne pousse jamais `journal.json`, qui contient les résultats de l'utilisateur.
 3. Il ne commite rien si `alerts.json` n'a pas changé. Il ne pousse que si la branche courante est `main` ; sinon il le dit.
 4. Un échec après l'enregistrement du trade (dépôt git absent, pas de réseau, identifiants refusés, branche autre que `main`, push rejeté) n'annule rien : la confirmation du trade s'affiche, suivie d'une ligne « alerts.json non poussé : <raison>. Poussez-le à la main. », et le code de sortie reste 0.
@@ -89,7 +89,7 @@ Une idée du briefing est annoncée quand toutes ces conditions sont vraies :
 - Aucune règle de `alerts.json` n'est ouverte sur le même symbole et le même sens (le trade est déjà pris).
 - Son `since_close` n'indique ni stop franchi ni cible atteinte (idée caduque).
 
-Au plus 3 idées par lancement, dans l'ordre du rang du briefing ; les autres restent en attente pour le lancement suivant et le dernier message le dit (« N autres idées en attente »). Une idée dont la taille est `to_confirm` ou `too_wide` est annoncée avec cette mention, jamais avec une taille inventée.
+Aucune idée n'est annoncée quand le briefing dit `closed_weekend` (un lancement manuel un week-end : les prix sont des clôtures, rien n'est « en formation »). Au plus 3 idées par lancement, dans l'ordre du rang du briefing ; les autres restent en attente pour le lancement suivant et le dernier message le dit (« N autres idées en attente »). Une idée dont la taille est `to_confirm` ou `too_wide` est annoncée avec cette mention, jamais avec une taille inventée.
 
 ### 4.2 Stops et cibles
 
