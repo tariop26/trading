@@ -142,8 +142,28 @@ class TestTouchedRules(unittest.TestCase):
         self.assertEqual(self.hit(rule(), bars)[0][0]["bar_time"], "2026-11-16T10:10:00+00:00")
 
     def test_a_rule_already_fired_is_ignored(self):
-        st = state(rules_fired=["T-stop"])
+        st = state(rules_fired=[ck.rule_key(rule())])
         self.assertEqual(self.hit(rule(), [bar(10, 5, 1.09, 1.1)], st), ([], []))
+
+    def test_a_level_moved_after_it_fired_is_watched_again(self):
+        st = state(rules_fired=[ck.rule_key(rule())])
+        touching = [bar(10, 5, 1.09, 1.1), bar(10, 40, 1.09, 1.1)]
+        moved_level = rule(level=1.096)                                  # same id, new level
+        moved_since = rule(since="2026-11-16T10:30:00+00:00")           # same id, moved later
+        for moved in (moved_level, moved_since):
+            self.assertNotEqual(ck.rule_key(moved), ck.rule_key(rule()))
+            hits, _ = self.hit(moved, touching, st)
+            self.assertEqual(len(hits), 1)
+        self.assertEqual(ck.rule_key(rule()), ck.rule_key(rule()))
+
+    def test_a_rule_without_a_trade_id_is_skipped_not_fatal(self):
+        broken = rule(id="X-stop")
+        del broken["trade_id"]
+        good = rule("cible", "haussier", 1.11, id="G-cible")
+        hits, log = ck.touched_rules([broken, good], {"EURUSD=X": [bar(10, 5, 1.1, 1.12)]}, state(), SINCE)
+        self.assertEqual([h["rule"]["id"] for h in hits], ["G-cible"])
+        self.assertGreaterEqual(len(log), 1)
+        self.assertEqual(ck.upcoming_events([TestEvents().ev(13, 20)], [broken], TestEvents.NOW, state()), [])
 
     def test_since_after_the_last_bar_gives_no_hit(self):
         r = rule(since="2026-11-16T12:00:00+00:00")
@@ -205,10 +225,14 @@ class TestEvents(unittest.TestCase):
         e = self.ev(13, 30)
         self.assertEqual(ck.event_key(e), "2026-11-16T13:30:00+00:00|USD|Core CPI m/m")
 
-    def test_the_window_is_15_to_30_minutes_inclusive(self):
+    def test_the_window_runs_from_now_to_30_minutes_so_a_late_or_dropped_run_loses_nothing(self):
         rules = [rule()]
-        for (h, m), expected in (((13, 14), 0), ((13, 15), 1), ((13, 30), 1), ((13, 31), 0)):
+        for (h, m), expected in (((12, 59), 0), ((13, 0), 0), ((13, 1), 1), ((13, 14), 1),
+                                 ((13, 15), 1), ((13, 30), 1), ((13, 31), 0)):
             self.assertEqual(len(self.up([self.ev(h, m)], rules)), expected, (h, m))
+        soon = self.ev(13, 0)
+        soon["utc"] = "2026-11-16T13:00:30+00:00"                      # 30 seconds ahead
+        self.assertEqual(self.up([soon], rules)[0]["minutes"], 1)       # never "dans 0 min"
         item = self.up([self.ev(13, 25)], rules)[0]
         self.assertEqual((item["minutes"], item["symbols"], item["event"]["title"]),
                          (25, ["EURUSD=X"], "Core CPI m/m"))

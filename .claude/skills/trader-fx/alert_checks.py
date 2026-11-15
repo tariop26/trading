@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 import strength
 
 MAX_IDEAS = 3
-WINDOW_MIN = timedelta(minutes=15)
 WINDOW_MAX = timedelta(minutes=30)
 KINDS = ("stop", "cible")
 SIDES = ("haussier", "baissier")
@@ -31,6 +30,7 @@ def _aware(text):
 
 def _valid_rule(rule):
     return (isinstance(rule, dict) and isinstance(rule.get("id"), str)
+            and isinstance(rule.get("trade_id"), str)
             and isinstance(rule.get("symbol"), str) and rule.get("type") in KINDS
             and rule.get("side") in SIDES and _number(rule.get("level")))
 
@@ -69,6 +69,12 @@ def new_ideas(briefing, open_rules, state, today, limit=MAX_IDEAS):
 
 # ---------------------------------------------------------------- stop and target contacts
 
+def rule_key(rule):
+    """What a fired rule is remembered by. The level and `since` are part of it: when the user
+    moves a level the rule is new, and is watched from the move."""
+    return "%s|%s|%s" % (rule.get("id"), rule.get("level"), rule.get("since"))
+
+
 def _touch(rule, high, low):
     """(touched, extreme value, "plus haut" | "plus bas") of one bar against one rule."""
     long_side = rule["side"] == "haussier"
@@ -91,7 +97,7 @@ def touched_rules(rules, bars, state, fallback_since):
         if not _valid_rule(rule):
             log.append("règle ignorée (mal formée) : %r" % (rule,))
             continue
-        if rule["id"] in fired:
+        if rule_key(rule) in fired:
             continue
         since = _aware(rule.get("since") if rule.get("since") is not None else fallback_since)
         if since is None:
@@ -126,8 +132,13 @@ def event_key(event):
 
 
 def upcoming_events(events, open_rules, now_utc, state):
-    """-> [{"event", "minutes", "symbols"}]: high-impact events 15 to 30 minutes ahead (bounds
-    included) that touch a currency of an open trade and were not announced yet."""
+    """-> [{"event", "minutes", "symbols"}]: high-impact events still to come within 30 minutes
+    that touch a currency of an open trade and were not announced yet.
+
+    The window opens at "now", not at 15 minutes: runs are 15 minutes apart, so a run that starts
+    late (or is dropped by GitHub) would otherwise leave an event nobody announces. Normally an
+    event is announced by the run that sees it 30 to 15 minutes ahead; a late run announces it
+    later rather than never."""
     symbols = sorted({r["symbol"] for r in open_rules if _valid_rule(r)})
     if not symbols:
         return []
@@ -140,10 +151,10 @@ def upcoming_events(events, open_rules, now_utc, state):
         if start is None or event_key(event) in sent:
             continue
         ahead = start - now_utc
-        if not WINDOW_MIN <= ahead <= WINDOW_MAX:
+        if not timedelta(0) < ahead <= WINDOW_MAX:
             continue
         concerned = [s for s in symbols if event.get("currency") in trade_currencies(s)]
         if concerned:
-            out.append({"event": event, "minutes": int(ahead.total_seconds() // 60),
+            out.append({"event": event, "minutes": max(1, int(ahead.total_seconds() // 60)),
                         "symbols": concerned})
     return out

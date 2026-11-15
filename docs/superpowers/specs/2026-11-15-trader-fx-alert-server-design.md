@@ -21,7 +21,7 @@ Verdict du test de faisabilité (workflow `Probe sources`, lancé le 2026-11-15 
 Critères de réussite :
 1. Une nouvelle idée est annoncée une fois par jour UTC et par couple symbole et sens.
 2. Un stop ou une cible touché après l'ouverture du trade donne un seul message par règle.
-3. Une annonce à fort impact d'une devise d'un trade ouvert est annoncée une fois, entre 15 et 30 minutes avant.
+3. Une annonce à fort impact d'une devise d'un trade ouvert est annoncée une fois, par le premier lancement qui la voit dans les 30 minutes à venir (normalement entre 30 et 15 minutes avant).
 4. Le coût reste sous 2 000 minutes Actions par mois (forfait gratuit, dépôt privé).
 5. `--dry-run` montre exactement les messages sans rien envoyer ni mémoriser.
 6. Un essai en direct fait arriver un vrai message sur le Telegram de l'utilisateur.
@@ -101,7 +101,9 @@ Le contact est décidé sur les plus hauts et plus bas bruts des barres, pas sur
 
 ### 4.3 Annonces
 
-Une annonce du calendrier (impact « High ») est annoncée quand elle est entre 15 et 30 minutes devant (bornes comprises), que sa devise est l'une des devises des trades ouverts, et que sa clé (`utc|devise|titre`) n'est pas dans `events_sent`. Les devises d'un trade ouvert sont celles de la paire pour un trade forex (`strength.pair_currencies`) ; pour un autre instrument, l'USD. Sans trade ouvert, aucune annonce.
+Une annonce du calendrier (impact « High ») est annoncée quand elle est encore à venir dans les 30 prochaines minutes (de « maintenant » exclu à 30 minutes comprises), que sa devise est l'une des devises des trades ouverts, et que sa clé (`utc|devise|titre`) n'est pas dans `events_sent`. Les devises d'un trade ouvert sont celles de la paire pour un trade forex (`strength.pair_currencies`) ; pour un autre instrument, l'USD. Sans trade ouvert, aucune annonce.
+
+Pourquoi la fenêtre s'ouvre à « maintenant » et non à 15 minutes : les lancements sont espacés de 15 minutes, donc une fenêtre de 15 minutes laisse un trou quand GitHub retarde ou abandonne un lancement (une annonce serait alors jamais annoncée). Un lancement en retard l'annonce plus tard plutôt que jamais ; le message indique les minutes restantes (au moins 1).
 
 ## 5. Messages
 
@@ -114,7 +116,7 @@ Français, heure de Paris, mots « haussier » et « baissier ». Jamais : achat
 
 ## 6. État, erreurs et sécurité
 
-- **État** (`alerts_state.json`, restauré depuis le cache d'Actions) : `{"v": 1, "day": "AAAA-MM-JJ", "ideas_sent": [...], "rules_fired": [...], "events_sent": [...], "down_notified_day": "..."}`. `ideas_sent` et `down_notified_day` se remettent à zéro quand `day` change ; une règle de `rules_fired` est oubliée quand elle n'est plus dans `alerts.json` ; une annonce de `events_sent` est oubliée quand elle est passée. L'état est sauvegardé seulement s'il a changé. Un état corrompu ou d'une autre version : on repart d'un état vide, avec au pire un message en double.
+- **État** (`alerts_state.json`, restauré depuis le cache d'Actions) : `{"v": 1, "day": "AAAA-MM-JJ", "ideas_sent": [...], "rules_fired": [...], "events_sent": [...], "down_notified_day": "..."}`. `ideas_sent` et `down_notified_day` se remettent à zéro quand `day` change ; une règle de `rules_fired` est mémorisée sous la clé `<id>|<niveau>|<since>` (un niveau déplacé est donc une règle nouvelle, surveillée depuis le déplacement) et oubliée quand elle n'est plus dans `alerts.json` ; une annonce de `events_sent` est oubliée quand elle est passée. L'état est sauvegardé seulement s'il a changé. Un état corrompu ou d'une autre version : on repart d'un état vide, avec au pire un message en double.
 - **Telegram** : une nouvelle tentative après un 429 (délai donné par la réponse, au plus 30 s) ou une erreur 5xx. Un échec final laisse le message non marqué (il repart au lancement suivant) et le lancement se termine en échec (code 1), pour que GitHub prévienne l'utilisateur.
 - **`alerts.json`** absent, illisible ou d'une autre version : le suivi et les annonces sont sautés, une ligne le dit dans le journal du lancement, la partie idées continue.
 - **Yahoo** : si les barres de 5 minutes ou le briefing sont indisponibles, la partie concernée est sautée ; si des règles existent et que leurs barres manquent, le message « Panne » part une fois par jour.

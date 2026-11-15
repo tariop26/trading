@@ -358,10 +358,13 @@ privé. Tous les calculs sont en Python, sans appel à Claude. Un lancement :
 2. **stop ou cible touché** : lit les barres de 5 minutes de chaque symbole et compare
    leur plus haut et leur plus bas au niveau, à partir de `since` (heure d'ouverture
    du trade ou du dernier déplacement du niveau). Un contact entre deux lancements
-   n'est donc pas manqué. Un message par règle ;
+   n'est donc pas manqué. Un message par règle et par niveau : un niveau déplacé
+   après son alerte est surveillé de nouveau à partir du déplacement ;
 3. **annonce à fort impact** : si une annonce touche une devise d'un trade ouvert
    (les deux devises de la paire ; l'USD pour un autre instrument), elle est annoncée
-   quand elle est entre 15 et 30 minutes devant, une seule fois ;
+   une seule fois, par le premier lancement qui la voit dans les 30 minutes à venir
+   (normalement 30 à 15 minutes avant ; un lancement en retard l'annonce plus tard
+   plutôt que jamais) ;
 4. **idées de trade** : relance le briefing et annonce les idées nouvelles (au plus
    3 par lancement, une fois par jour UTC et par symbole et sens), sauf celles que
    l'utilisateur tient déjà, les idées caduques, et tout un week-end (briefing

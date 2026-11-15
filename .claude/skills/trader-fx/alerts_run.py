@@ -197,7 +197,7 @@ def main(argv=None, deps=None):
                           lambda st: st.update(down_notified_day=today)))
         for h in hits:
             queue.append((alert_messages.touch_message(h),
-                          lambda st, rid=h["rule"]["id"]: st["rules_fired"].append(rid)))
+                          lambda st, key=alert_checks.rule_key(h["rule"]): st["rules_fired"].append(key)))
 
     # 4. announcements
     events = []
@@ -212,7 +212,11 @@ def main(argv=None, deps=None):
                           st["events_sent"].append(key)))
 
     # 5. ideas
-    document = brief(args.config)
+    try:
+        document = brief(args.config)
+    except Exception as e:  # noqa: BLE001 - a briefing bug must not silence the stops: type only
+        _say("briefing en échec (%s) : idées sautées." % type(e).__name__)
+        document = None
     if document is None:
         _say("briefing indisponible : idées sautées.")
     else:
@@ -241,7 +245,7 @@ def main(argv=None, deps=None):
         return code
 
     # prune what is gone, but only against sources we could actually read
-    active = ({r["id"] for r in rules if isinstance(r.get("id"), str)} if rules is not None
+    active = ({alert_checks.rule_key(r) for r in rules} if rules is not None
               else set(state["rules_fired"]))
     future = _future_event_keys(events, now) if events else set(state["events_sent"])
     state = alert_state.prune(state, active, future)

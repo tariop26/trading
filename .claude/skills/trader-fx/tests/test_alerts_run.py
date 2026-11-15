@@ -134,7 +134,7 @@ class TestFullRun(Harness):
         self.assertTrue(self.sent[1].startswith("Annonce à fort impact dans 25 min"), self.sent[1])
         self.assertTrue(self.sent[2].startswith("Idée de trade, en formation"), self.sent[2])
         st = self.saved_state()
-        self.assertEqual(st["rules_fired"], ["T-stop"])
+        self.assertEqual(st["rules_fired"], [alert_checks.rule_key(rule("stop", 1.095))])
         self.assertEqual(st["events_sent"], [alert_checks.event_key(self.events[0])])
         self.assertEqual(st["ideas_sent"], ["AUDUSD=X|baissier|2026-11-16"])
         self.assertEqual(st["day"], TODAY)
@@ -226,6 +226,49 @@ class TestFailures(Harness):
         self.assertEqual(self.run_main(), 0)
         self.assertEqual(self.prefixes(), ["Stop touché"])
         self.assertIn("briefing", self.output.lower())
+
+    def test_an_exception_in_the_briefing_skips_ideas_only(self):
+        self.write_alerts(rules_doc(rule("stop", 1.095)))
+        self.bars = {"EURUSD=X": [bar(10, 10, 1.094, 1.1)]}
+
+        def boom(config_path):
+            raise ZeroDivisionError("secret detail 987654")
+
+        deps = self.deps()
+        deps["brief"] = boom
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = alerts_run.main(["--state", self.state, "--alerts", self.alerts,
+                                    "--config", self.config], deps)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.prefixes(), ["Stop touché"])
+        self.assertIn("ZeroDivisionError", out.getvalue())
+        self.assertNotIn("987654", out.getvalue())
+
+    def test_a_rule_without_trade_id_does_not_silence_the_others(self):
+        broken = rule("stop", 1.0, "X")
+        del broken["trade_id"]
+        self.write_alerts(rules_doc(broken, rule("stop", 1.095)))
+        self.bars = {"EURUSD=X": [bar(10, 10, 1.0, 1.1)]}
+        self.assertEqual(self.run_main(), 0, self.output)
+        self.assertEqual(self.prefixes()[0], "Stop touché")
+        self.assertEqual(len([t for t in self.sent if t.startswith("Stop touché")]), 1)
+
+    def test_a_level_moved_after_its_alert_is_announced_again(self):
+        self.write_alerts(rules_doc(rule("cible", 1.11)))
+        self.bars = {"EURUSD=X": [bar(10, 10, 1.1, 1.1101), bar(10, 40, 1.1, 1.121)]}
+        self.briefing = None
+        self.run_main()
+        self.assertEqual(self.prefixes(), ["Cible touchée"])
+        self.sent.clear()
+        moved = rule("cible", 1.12)
+        moved["since"] = "2026-11-16T10:30:00+00:00"                  # the user moved the target
+        self.write_alerts(rules_doc(moved))
+        self.run_main()
+        self.assertEqual(self.prefixes(), ["Cible touchée"])
+        self.sent.clear()
+        self.run_main()
+        self.assertEqual(self.sent, [])                                 # and only once
 
     def test_closed_weekend_sends_no_idea_but_still_checks_stops(self):
         self.write_alerts(rules_doc(rule("stop", 1.095)))
