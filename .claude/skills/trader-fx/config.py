@@ -16,6 +16,7 @@ DEFAULTS = {
     "plan": {"stop_atr_mult": 1.5, "target_r": 2.0},
     "ideas": {"max_shown": 5, "max_per_exposure": 2},
     "contracts": {},
+    "alerts": {"auto_push": False},
 }
 
 CONTRACT_KEYS = ("usd_per_point", "step", "min")
@@ -120,6 +121,11 @@ def validate(cfg):
     out["ideas"] = ideas
 
     out["contracts"] = _contracts(cfg.get("contracts", {}))
+
+    alerts = _section(cfg, "alerts")
+    if not isinstance(alerts["auto_push"], bool):
+        raise ConfigError("La valeur de alerts.auto_push doit être true ou false.")
+    out["alerts"] = alerts
     return out
 
 

@@ -17,6 +17,7 @@ EXPECTED = {
     "plan": {"stop_atr_mult": 1.5, "target_r": 2.0},
     "ideas": {"max_shown": 5, "max_per_exposure": 2},
     "contracts": {},
+    "alerts": {"auto_push": False},
 }
 
 
@@ -93,6 +94,18 @@ class ConfigTests(unittest.TestCase):
         self.assertRejects({"risk": {"per_trade": 1}}, "clé inconnue")
         self.assertRejects({"risk": {"per_trade": 1}}, "risk.per_trade")
         self.assertRejects({"_note": "x"}, "clé inconnue")
+
+    def test_alerts_section_defaults_and_booleans(self):
+        self.assertIs(config.validate({})["alerts"]["auto_push"], False)
+        self.assertIs(config.validate({"alerts": {}})["alerts"]["auto_push"], False)
+        self.assertIs(config.validate({"alerts": {"auto_push": True}})["alerts"]["auto_push"], True)
+        self.assertIs(config.validate({"alerts": {"auto_push": False}})["alerts"]["auto_push"], False)
+
+    def test_alerts_section_rejects(self):
+        for bad in ("yes", 1, 0, None):
+            self.assertRejects({"alerts": {"auto_push": bad}}, "alerts.auto_push")
+        self.assertRejects({"alerts": 3}, "alerts")
+        self.assertRejects({"alerts": {"foo": True}}, "alerts.foo")
 
     def test_rejects_non_object_section(self):
         self.assertRejects({"risk": 1}, "risk")
