@@ -285,7 +285,8 @@ class TestListStatsAlerts(CliCase):
         self.assertEqual([r["id"] for r in doc["rules"]],
                          [t1["id"] + "-stop", t1["id"] + "-cible", t2["id"] + "-stop"])
         for rule in doc["rules"]:
-            self.assertEqual(set(rule), {"id", "trade_id", "symbol", "type", "side", "level", "decimals"})
+            self.assertEqual(set(rule), {"id", "trade_id", "symbol", "type", "side", "level", "decimals",
+                                         "since"})
         self.assertEqual((doc["rules"][0]["level"], doc["rules"][0]["decimals"],
                           doc["rules"][2]["decimals"]), (1.095, 5, 3))
         for word in ("pnl", "risk", "capital", "lots", "units", "result", "note"):
@@ -367,6 +368,35 @@ class TestVocabulary(CliCase):
         for name in ("test_journal.py", "test_journal_cli.py", "test_jstats.py", "test_entry_session.py"):
             with open(os.path.join(here, name), "rb") as f:
                 self.assertEqual(f.read().count(bytes([8])), 0, name)
+
+
+class TestAlertRulesSince(unittest.TestCase):
+    """`since` tells the alert server from when a level counts (spec 3.2)."""
+
+    def setUp(self):
+        self.j = journal.empty_journal()
+        self.t = journal.open_trade(self.j, symbol="EURUSD=X", name="EUR/USD", side="haussier",
+                                    price=1.1, lots=1.0, stop=1.095, target=1.11, when_utc=NOW,
+                                    risk_usd=500.0)
+
+    def since(self):
+        rules = journal.build_alerts(self.j, NOW)["rules"]
+        return {r["type"]: r["since"] for r in rules}
+
+    def test_alert_rules_carry_since(self):
+        opened = "2026-11-16T10:00:00+00:00"
+        self.assertEqual(self.since(), {"stop": opened, "cible": opened})
+
+    def test_since_follows_the_last_move_of_each_level(self):
+        opened = "2026-11-16T10:00:00+00:00"
+        t1 = datetime(2026, 11, 16, 11, 0, tzinfo=timezone.utc)
+        t2 = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        t3 = datetime(2026, 11, 16, 13, 0, tzinfo=timezone.utc)
+        journal.amend_trade(self.j, self.t["id"], when_utc=t1, stop=1.093)
+        journal.amend_trade(self.j, self.t["id"], when_utc=t2, stop=1.098)
+        self.assertEqual(self.since(), {"stop": t2.isoformat(), "cible": opened})
+        journal.amend_trade(self.j, self.t["id"], when_utc=t3, target=1.12)
+        self.assertEqual(self.since(), {"stop": t2.isoformat(), "cible": t3.isoformat()})
 
 
 if __name__ == "__main__":

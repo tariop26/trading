@@ -306,6 +306,16 @@ def close_trade(journal, trade_id, *, price, when_utc, reason="manuel", pnl_usd=
 
 # ---------------------------------------------------------------- alerts file
 
+_MOVE_EVENT = {"stop": "stop_deplace", "cible": "cible_deplacee"}
+
+
+def _level_since(trade, kind):
+    """When a level starts to count: the last time it was moved, else the opening time."""
+    moves = [h["time"] for h in trade.get("history") or []
+             if isinstance(h, dict) and h.get("event") == _MOVE_EVENT[kind] and h.get("time")]
+    return moves[-1] if moves else trade["entry"]["time"]
+
+
 def build_alerts(journal, now_utc):
     """The stop and target rules of the open trades, for the alert server. Levels only: no
     result, capital, size or risk ever goes into this file."""
@@ -318,7 +328,8 @@ def build_alerts(journal, now_utc):
                 continue
             rules.append({"id": "%s-%s" % (t["id"], kind), "trade_id": t["id"],
                           "symbol": t["symbol"], "type": kind, "side": t["side"],
-                          "level": level, "decimals": plan.price_decimals(t["symbol"], level)})
+                          "level": level, "decimals": plan.price_decimals(t["symbol"], level),
+                          "since": _level_since(t, kind)})
     return {"v": 1, "updated": _iso(now_utc), "rules": rules}
 
 
