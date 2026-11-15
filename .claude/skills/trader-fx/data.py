@@ -24,6 +24,7 @@ TTL_DAILY = 21600
 TTL_INTRADAY = 600
 DAILY = ("1d", "6mo")
 HOURLY = ("1h", "5d")
+INTRADAY = ("5m", "5d")      # the alert server: levels are checked on 5-minute bars
 
 UA = "Mozilla/5.0 (compatible; trader-fx/1.0)"
 YAHOO_HOSTS = ("https://query2.finance.yahoo.com", "https://query1.finance.yahoo.com")
