@@ -87,7 +87,7 @@ class TestNarrowScreenCss(unittest.TestCase):
         self.assertEqual(css_block(self.t, "td.wrap").get("white-space"), "normal")
 
     def test_the_card_layout_starts_at_640px_and_nowhere_else(self):
-        self.assertEqual(self.t.count("max-width: 640px"), 1)
+        self.assertEqual(self.t.count("@media (max-width: 640px)"), 1)     # the script asks the same width
         self.assertNotIn("min-width: 641px", self.t)
 
 

@@ -190,6 +190,15 @@
   footer { border-top: 1px solid var(--line); padding-top: 16px; font-size: 0.875rem; color: var(--muted); }
   footer strong { color: var(--ink); font-weight: 600; }
 
+  /* Mobile layout. These base rules are the wide-screen side of what the phone block below changes:
+     the jump bar and the swipe hint are phone-only; a fold is a <details> that the script opens on a
+     wide screen and leaves closed on a phone. */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  .jump { display: none; }
+  .swipe-hint { display: none; }
+  .fold > summary { cursor: pointer; font-family: var(--font-head); font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 700; padding: 6px 0; }
+  .fold[open] > summary { margin-bottom: 8px; }
+
   /* Phone: a table of many columns is read as a stack of cards, one per row, each cell a line
      "label : value" (the label comes from data-label, set by table() in the script). No sideways
      scrolling. The header row stays in the page for screen readers but is hidden visually. A cell
@@ -204,6 +213,31 @@
     tbody tr td:last-child { border-bottom: 0; }
     td::before { content: attr(data-label); flex: none; max-width: 45%; margin-right: auto; text-align: left; font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
     td.wrap { min-width: 0; }
+
+    /* the jump bar: sticky chips, one tap to a section */
+    .jump { display: flex; gap: 8px; overflow-x: auto; position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--line); scrollbar-width: none; }
+    .jump a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: 50px; background: var(--surface); color: var(--ink); text-decoration: none; font-family: var(--font-head); font-size: 0.8125rem; font-weight: 700; white-space: nowrap; }
+    section { scroll-margin-top: 64px; }
+
+    /* denser blocks */
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .nums { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fold > summary { min-height: 44px; display: flex; align-items: center; }
+
+    /* currency strength: the three windows are swiped, one at a time */
+    .strength { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+    .strength .panel { flex: 0 0 86%; scroll-snap-align: start; }
+    .swipe-hint { display: block; }
+
+    /* the busy tables show what a phone needs; the other columns stay in the page */
+    table.t-swing td:nth-child(2), table.t-swing td:nth-child(5), table.t-swing td:nth-child(8) { display: none; }
+    table.t-sessions td:nth-child(4), table.t-sessions td:nth-child(5) { display: none; }
+    table.t-cal td:nth-child(3) { display: none; }
+    table.t-levels tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; }
+    table.t-levels td { flex-direction: column; align-items: flex-start; justify-content: flex-start; text-align: left; border-bottom: 0; padding: 4px 0; }
+    table.t-levels td::before { max-width: none; margin-right: 0; }
+    table.t-levels td:nth-child(1), table.t-levels td:nth-child(2) { grid-column: 1 / -1; }
   }
 </style>
 
@@ -217,6 +251,15 @@
     <div class="asof" id="asof"></div>
     <div class="banners" id="banners"></div>
   </header>
+
+  <nav class="jump" aria-label="Sections">
+    <a href="#s-ideas">Idées</a>
+    <a href="#s-resume">Résumé</a>
+    <a href="#s-force">Devises</a>
+    <a href="#s-cal">Calendrier</a>
+    <a href="#s-swing">Setups</a>
+    <a href="#s-plan">Niveaux</a>
+  </nav>
 
   <section id="s-ideas" aria-labelledby="h-ideas">
     <h2 id="h-ideas">Trades potentiels</h2>
@@ -325,7 +368,20 @@
 
   function empty(msg) { return h("p", "empty", msg); }
 
-  function table(cols, rows) {
+  // A phone gets the folds closed (a long page becomes a short one); a wide screen sees everything.
+  function narrow() {
+    try { return !!(window.matchMedia && window.matchMedia("(max-width: 640px)").matches); }
+    catch (e) { return false; }
+  }
+
+  function fold(summary, content) {
+    var d = h("details", "fold", h("summary", "", summary), content);
+    if (!narrow()) { d.setAttribute("open", ""); }
+    return d;
+  }
+
+  // `cls` names the layout of the table on a phone (see the t-* rules of the phone block)
+  function table(cols, rows, cls) {
     var head = h("tr");
     cols.forEach(function (c) { head.append(h("th", c.cls, c.label)); });
     var body = h("tbody");
@@ -339,7 +395,7 @@
       });
       body.append(tr);
     });
-    var t = h("table", "", h("thead", "", head), body);
+    var t = h("table", cls || "", h("thead", "", head), body);
     return h("div", "scroll", t);
   }
 
@@ -460,7 +516,7 @@
     if (!panels.length) { box.replaceChildren(empty("Aucune donnée de force des devises.")); return; }
     var grid = h("div", "strength");
     panels.forEach(function (p) { grid.append(p); });
-    box.replaceChildren(grid, h("p", "note",
+    box.replaceChildren(grid, h("p", "note swipe-hint", "Faites glisser pour passer d’une période à l’autre."), h("p", "note",
       "Variation logarithmique moyenne, en %, sur les paires forex de chaque devise (USD, EUR, GBP, JPY, CHF, AUD, NZD, CAD). " +
       "Barres vers la droite : devise plus forte que la moyenne ; vers la gauche : plus faible. Chaque colonne a sa propre échelle."));
     box.style.display = "flex";
@@ -489,7 +545,7 @@
       body = empty(status === "unavailable" ? "Calendrier indisponible : aucune annonce vérifiée."
         : "Aucune annonce à fort impact sur les devises analysées.");
     } else {
-      body = table([
+      var cols = [
         { label: "Date (Paris)", cell: function (e) { return text(e.date_paris); }, cls: "num" },
         { label: "Heure Paris", cell: function (e) { return text(e.time_paris); }, cls: "num" },
         { label: "Heure NY", cell: function (e) { return text(e.time_ny); }, cls: "num" },
@@ -498,7 +554,18 @@
         { label: "Prévu", cell: function (e) { return text(e.forecast); }, cls: "num r" },
         { label: "Précédent", cell: function (e) { return text(e.previous); }, cls: "num r" },
         { label: "24 h", cell: function (e) { return in24[eventKey(e)] ? h("span", "pill on", "oui") : ""; } }
-      ], events);
+      ];
+      // the next 24 hours stay in view; the rest of the week folds away on a phone
+      var soon = events.filter(function (e) { return in24[eventKey(e)]; });
+      var later = events.filter(function (e) { return !in24[eventKey(e)]; });
+      if (soon.length && later.length) {
+        body = h("div", "sub", table(cols, soon, "t-cal"),
+          fold("Autres annonces de la semaine (" + later.length + ")", table(cols, later, "t-cal")));
+      } else if (later.length) {
+        body = fold("Annonces de la semaine (" + later.length + ")", table(cols, later, "t-cal"));
+      } else {
+        body = table(cols, soon, "t-cal");
+      }
     }
     box.replaceChildren(status_row, body);
     box.style.display = "flex";
@@ -528,7 +595,7 @@
     FAMILIES.forEach(function (f) {
       var rows = hits.filter(function (x) { return family(x.symbol) === f[0]; });
       if (!rows.length) { return; }
-      out.push(h("div", "sub", h("h3", "", f[1] + " (" + rows.length + ")"), table([
+      out.push(h("div", "sub", fold(f[1] + " (" + rows.length + ")", table([
         { label: "Symbole", cell: function (x) { return text(x.symbol); } },
         { label: "Nom", cell: function (x) { return text(x.name); } },
         { label: "Dernier", cell: function (x) { return price(x.last); }, cls: "num r" },
@@ -537,7 +604,7 @@
         { label: "Tendance", cell: function (x) { return TREND_LABELS[x.trend] || "n/a"; } },
         { label: "Règles", cell: function (x) { return setupTags(list(x.setups).concat(list(x.setups_short))); }, cls: "wrap" },
         { label: "Dernière barre", cell: function (x) { return text(x.last_bar_date); }, cls: "num" }
-      ], rows)));
+      ], rows, "t-swing"))));
     });
     box.replaceChildren.apply(box, out);
     box.style.display = "flex";
@@ -630,7 +697,7 @@
         facts.push(stat("Valeur du pip par lot", fixed(pip, Math.abs(pip) < 0.01 ? 4 : 2) + " USD"));
       }
     }
-    out.push(h.apply(null, ["dl", "facts"].concat(facts)));
+    var factsDl = h.apply(null, ["dl", "facts"].concat(facts));    // goes in the fold, below
 
     if (size.status === "to_confirm") {
       out.push(h("p", "size-msg", MSG_TO_CONFIRM));
@@ -647,12 +714,15 @@
       out.push(h("p", "note", "Taille limitée par le levier maximal."));
     }
 
+    // the plan, the size and any warning stay in view; the figures behind them fold on a phone
+    var more = [factsDl];
     var why = list(idea.why);
     if (why.length) {
       var ul = h("ul", "why");
       why.forEach(function (w) { ul.append(h("li", "", text(w))); });
-      out.push(h("div", "sub", h("h3", "", "Pourquoi"), ul));
+      more.push(h("div", "sub", h("h3", "", "Pourquoi"), ul));
     }
+    out.push(fold("Détails et pourquoi", h.apply(null, ["div", "sub"].concat(more))));
     return h.apply(null, ["article", "panel idea"].concat(out));
   }
 
@@ -737,7 +807,7 @@
         { label: "État", cell: function (s) {
           return s.active ? h("span", "pill on", "en cours") : h("span", "pill", "hors séance");
         } }
-      ], sessions)));
+      ], sessions, "t-sessions")));
     } else {
       out.push(h("div", "sub", h("h3", "", "Sessions"), empty("Sessions non disponibles.")));
     }
@@ -753,7 +823,7 @@
           return price(r[k]);
         };
       };
-      out.push(h("div", "sub", h("h3", "", "Niveaux à surveiller"), table([
+      out.push(h("div", "sub", fold("Niveaux à surveiller", h("div", "sub", table([
         { label: "Symbole", cell: function (r) { return text(r.symbol); } },
         { label: "Nom", cell: function (r) { return text(r.name); } },
         { label: "Haut veille", cell: lv("prev_high"), cls: "num r" },
@@ -766,8 +836,8 @@
         { label: "Asie bas", cell: asia("asia_low"), cls: "num r" },
         { label: "Haut jour", cell: lv("day_high"), cls: "num r" },
         { label: "Bas jour", cell: lv("day_low"), cls: "num r" }
-      ], levels), h("p", "note",
-        "Asie : 00:00 à 07:00 UTC. Haut et bas du jour : depuis 00:00 UTC. n/a : barres 1 h absentes (matières premières, indices, week-end).")));
+      ], levels, "t-levels"), h("p", "note",
+        "Asie : 00:00 à 07:00 UTC. Haut et bas du jour : depuis 00:00 UTC. n/a : barres 1 h absentes (matières premières, indices, week-end).")))));
     } else {
       out.push(h("div", "sub", h("h3", "", "Niveaux à surveiller"), empty("Aucun niveau disponible.")));
     }
@@ -780,7 +850,7 @@
         { label: "Heure NY", cell: function (e) { return text(e.time_ny); }, cls: "num" },
         { label: "Devise", cell: function (e) { return text(e.currency); } },
         { label: "Annonce", cell: function (e) { return text(e.title); }, cls: "wrap" }
-      ], ev24)));
+      ], ev24, "t-cal")));
     }
     var box = $("plan");
     box.replaceChildren.apply(box, out);

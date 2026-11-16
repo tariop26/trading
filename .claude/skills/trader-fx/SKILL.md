@@ -134,8 +134,8 @@ contient le bloc « Idées de trade (N), plan mécanique à valider » (8 lignes
 plus, une par idée, puis la ligne « Risque cumulé »). La page web a sept
 sections : Trades potentiels (juste après l'en-tête), Résumé, Force des
 devises, Calendrier, Setups swing, Plan du jour, Avertissements. Thème clair et
-sombre ; sur un écran de 640 px ou moins, chaque tableau devient une pile de cartes
-(une par ligne, un « libellé : valeur » par cellule), sans défilement sur le côté.
+sombre ; sur un écran de 640 px ou moins la page est repensée pour le téléphone (barre de
+navigation, blocs repliables, tableaux en cartes : voir « Briefing publié »).
 
 ## Trades potentiels
 
@@ -431,8 +431,17 @@ délai de 10 minutes) ne déclenche aucun message : seul GitHub peut le signaler
 **Lecture sur téléphone.** Le fichier publié est un document complet (`page.standalone` ajoute
 `<!doctype html>`, `<meta charset>` et `<meta name="viewport">`, que la plateforme des
 Artifacts fournit d'elle-même mais pas GitHub Pages ; sans la balise viewport un téléphone
-dessine la page à la largeur d'un écran de bureau, rétrécie). Sous 640 px les tableaux
-s'affichent en cartes. La page des Artifacts, elle, n'est pas modifiée.
+dessine la page à la largeur d'un écran de bureau, rétrécie). Sous 640 px (le téléphone) la
+page change de forme : une barre de pastilles collée en haut (Idées, Résumé, Devises,
+Calendrier, Setups, Niveaux) saute à une section ; chaque idée garde son plan (entrée, stop,
+cible, taille) visible et replie les chiffres annexes et le « Pourquoi » dans « Détails et
+pourquoi » ; la force des devises se fait glisser une période à la fois ; le calendrier garde
+les annonces des 24 h visibles et replie le reste de la semaine ; les familles de setups et les
+niveaux à surveiller sont repliés avec leur nombre ; le résumé tient sur deux colonnes ; les
+tableaux deviennent des cartes allégées, sans défilement sur le côté. Sur un grand écran tout
+reste ouvert et la mise en page ne change pas. Tout le texte reste dans la page, seul
+l'affichage change. La page des Artifacts bénéficie des mêmes repliages (ils suivent la largeur
+de l'écran) mais n'a pas besoin du squelette de document.
 
 La page affiche son heure de production et un bandeau rouge « périmé » au bout de 12 heures.
 Comme il n'y a que deux briefings par jour, ce bandeau apparaît **sans panne** entre les
