@@ -30,11 +30,11 @@ Critères de réussite :
 
 ## 3. Architecture
 
-Un workflow, trois jobs, un exécuteur ; même schéma que le serveur d'alertes.
+Un workflow, un job, un exécuteur ; même schéma que le serveur d'alertes.
 
 | fichier | rôle | dépend de |
 | --- | --- | --- |
-| `.github/workflows/briefing.yml` | planification, permissions Pages, trois jobs (`build`, `deploy`, `notify`) | |
+| `.github/workflows/briefing.yml` | planification, permissions Pages, un job `publish` | |
 | `.claude/skills/trader-fx/briefing_run.py` | sous-commandes `build` et `notify` ; construit le dossier `site/` et le message ; envoie le message | `fx`, `briefing`, `page`, `config`, `telegram`, `alerts_run` (le secret de configuration) |
 | `alerts_run.py` (modifié) | `_apply_config_secret` devient publique (`apply_config_secret`) pour être réutilisée | |
 | `tests/test_telegram.py` (modifié) | le chat id réel est remplacé par une valeur factice | |
@@ -43,15 +43,20 @@ Un workflow, trois jobs, un exécuteur ; même schéma que le serveur d'alertes.
 
 Le workflow se déclenche par `cron: "30 4 * * 1-5"` et `cron: "15 22 * * 0-4"` (UTC ; 0 est le dimanche) et à la main (`workflow_dispatch`, avec une case `dry_run`). Groupe de concurrence `briefing`, sans annulation ; `permissions: contents: read` au niveau du workflow.
 
-1. **Job `build`** (`timeout-minutes: 10`) : `checkout`, puis `briefing_run.py build --out-dir site` (`--dry-run` si la case est cochée), puis `actions/upload-pages-artifact` sur `site/`. `build` :
+Un seul job `publish` (`timeout-minutes: 10`, `environment: github-pages`, `permissions: pages: write, id-token: write` en plus de `contents: read`), dont les étapes se suivent ; le résumé reste donc un fichier sur disque (`site/summary.txt`) d'une étape à l'autre :
+
+1. `checkout`.
+2. `briefing_run.py build --out-dir site` (avec `--dry-run` si la case est cochée). `build` :
    - écrit la configuration issue du secret `TRADER_FX_CONFIG` si elle existe (jamais affichée) ;
    - lance `fx.main(["brief", "--no-cache", "--out", <temporaire>, ...])`, puis `page.render_page` avec `report_template.html` ;
    - écrit `site/index.html` (la page) et `site/summary.txt` (le résumé de `briefing.render_summary`) ;
    - en cas d'échec du briefing : n'écrit rien dans `site/`, envoie le message « Briefing indisponible » (voir 4), et se termine avec le code 1 ; le job s'arrête, rien n'est publié.
-2. **Job `deploy`** (`needs: build`, `environment: github-pages`, `permissions: pages: write, id-token: write`) : `actions/deploy-pages`. L'URL publiée sort de l'étape de déploiement.
-3. **Job `notify`** (`needs: deploy`) : `briefing_run.py notify --url <url de la page> --summary-file ...` envoie le message de succès. Le résumé voyage d'un job à l'autre dans l'artefact de `build` (`summary.txt`), pas dans une variable.
+3. `actions/upload-pages-artifact` sur `site/`, puis `actions/deploy-pages` (`id: deployment`) ; l'URL publiée sort de cette étape.
+4. `briefing_run.py notify --url "$PAGE_URL"` : envoie le message de succès.
 
-Les versions exactes des actions (`upload-pages-artifact`, `deploy-pages`, `checkout`) sont vérifiées au moment du plan ; on évite les versions qui tournent encore sur Node 20.
+Avec `--dry-run`, `build` exécute le briefing, imprime le message et le résumé et n'écrit pas `site/` ; les étapes 3 et 4 portent `if: ${{ inputs.dry_run != true }}` et sont sautées (la condition est vraie pour un lancement planifié, dont `inputs` est vide).
+
+Versions des actions (vérifiées le 2026-11-16, toutes sur Node 24) : `actions/checkout@v6`, `actions/upload-pages-artifact@v5`, `actions/deploy-pages@v5`. Le serveur d'alertes passe aussi à `checkout@v6` et `cache@v5`.
 
 ## 4. Les messages Telegram
 
@@ -80,7 +85,7 @@ Environ 10 lancements par semaine de moins de 2 minutes. Les minutes Actions son
 - Échec du briefing (code 1 de `fx.main`, ou exception) : `site/` reste vide ou absent, un seul message « Briefing indisponible » part, code 1.
 - `briefing_run notify` : le message de succès contient le lien avant le résumé ; un résumé de 10 000 caractères est tronqué sous 4 096 avec le lien conservé ; échec d'envoi : code 1.
 - Aucun mot interdit ni secret dans aucun message ; `--dry-run` n'envoie rien et n'écrit pas `site/`.
-- Workflow (lecture du texte du YAML) : les deux `cron` exacts ; `workflow_dispatch` avec `dry_run` booléen ; concurrence `briefing` sans annulation ; permissions `contents: read` seulement au niveau du workflow, `pages: write` et `id-token: write` seulement dans `deploy` ; `environment: github-pages` ; versions d'actions fixées ; secrets uniquement par `env:` ; `needs` en chaîne `build`, `deploy`, `notify`.
+- Workflow (lecture du texte du YAML) : les deux `cron` exacts ; `workflow_dispatch` avec `dry_run` booléen ; concurrence `briefing` sans annulation ; permissions `contents: read` seulement au niveau du workflow, `pages: write` et `id-token: write` seulement dans le job `publish` ; `environment: github-pages` ; versions d'actions fixées ; secrets uniquement par `env:` ; un seul job `publish` ; étapes dans l'ordre checkout, build, upload, deploy, notify, les trois dernières conditionnées par `inputs.dry_run != true`.
 - Essai en direct, à part (voir 8) : lancement manuel à blanc, puis lancement réel, vérifié sur le téléphone.
 
 ## 8. Mise en place, à faire par l'utilisateur (une seule fois)
