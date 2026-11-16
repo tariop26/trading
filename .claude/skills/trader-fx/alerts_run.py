@@ -74,7 +74,7 @@ def _default_brief(config_path):
             return json.load(f)
 
 
-def _apply_config_secret(secret, path):
+def apply_config_secret(secret, path):
     """Write the TRADER_FX_CONFIG secret to `path` after validating it. -> an error line or None.
     The line never repeats the secret or any value from it."""
     try:
@@ -162,7 +162,7 @@ def main(argv=None, deps=None):
 
     # 1. configuration (the secret is optional)
     if env.get("TRADER_FX_CONFIG"):
-        problem = _apply_config_secret(env["TRADER_FX_CONFIG"], args.config)
+        problem = apply_config_secret(env["TRADER_FX_CONFIG"], args.config)
         if problem:
             print(problem)
             return 1
