@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "updated": "2026-11-16T10:49:50.046869+00:00",
+  "updated": "2026-11-16T15:17:28.638352+00:00",
   "rules": [
     {
       "id": "2026-11-16-_FCHI-1-stop",
@@ -21,6 +21,26 @@
       "level": 8295.0,
       "decimals": 2,
       "since": "2026-11-16T10:49:50.018047+00:00"
+    },
+    {
+      "id": "2026-11-16-CADCHF-1-stop",
+      "trade_id": "2026-11-16-CADCHF-1",
+      "symbol": "CADCHF=X",
+      "type": "stop",
+      "side": "haussier",
+      "level": 0.58006,
+      "decimals": 5,
+      "since": "2026-11-16T15:17:28.013931+00:00"
+    },
+    {
+      "id": "2026-11-16-CADCHF-1-cible",
+      "trade_id": "2026-11-16-CADCHF-1",
+      "symbol": "CADCHF=X",
+      "type": "cible",
+      "side": "haussier",
+      "level": 0.59803,
+      "decimals": 5,
+      "since": "2026-11-16T15:17:28.013931+00:00"
     }
   ]
 }
