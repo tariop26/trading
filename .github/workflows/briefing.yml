@@ -50,6 +50,7 @@ jobs:
             python3 .claude/skills/trader-fx/briefing_run.py build --out-dir site
           fi
       - name: Upload the page
+        id: upload
         if: ${{ inputs.dry_run != true }}
         uses: actions/upload-pages-artifact@v5
         with:
@@ -65,3 +66,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: python3 .claude/skills/trader-fx/briefing_run.py notify --url "$PAGE_URL"
+      # A failed build has already announced itself; this covers a failed upload or deploy
+      # (Pages not enabled, Pages outage), which would otherwise leave an old page without a word.
+      - name: Announce a publication failure on Telegram
+        if: ${{ always() && inputs.dry_run != true && (steps.upload.outcome == 'failure' || steps.deployment.outcome == 'failure') }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 .claude/skills/trader-fx/briefing_run.py fail --reason "publication sur GitHub Pages en échec"

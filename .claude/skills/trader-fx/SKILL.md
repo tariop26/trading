@@ -422,13 +422,22 @@ l'été pour le premier). Un lancement :
 
 Si le briefing échoue (par exemple Yahoo en panne), rien n'est publié : **la page précédente
 reste en ligne**, et un message Telegram d'une ligne le dit (« Briefing indisponible (…) : …
-La page précédente reste en ligne. »). La page affiche son heure de production et un bandeau
-rouge « périmé » au bout de 12 heures. Le week-end la page est publiée aussi, avec la mention
-« Marché fermé (week-end) ».
+La page précédente reste en ligne. »). Il en va de même si la publication sur GitHub Pages
+échoue (Pages non activé, panne de Pages) : la raison est « publication sur GitHub Pages en
+échec ». Un briefing qui n'arrive pas du tout (lancement planifié abandonné ou arrêté par le
+délai de 10 minutes) ne déclenche aucun message : seul GitHub peut le signaler par e-mail.
+
+La page affiche son heure de production et un bandeau rouge « périmé » au bout de 12 heures.
+Comme il n'y a que deux briefings par jour, ce bandeau apparaît **sans panne** entre les
+lancements : de 16 h 30 à 22 h 15 UTC en semaine, et du vendredi soir au dimanche soir. Seul le
+message Telegram « Briefing indisponible » signale un vrai échec. Un lancement manuel le
+week-end publie aussi la page, avec la mention « Marché fermé (week-end) » ; le briefing du
+dimanche à 22 h 15 UTC tombe après l'ouverture du marché et ne la porte pas.
 
 **Mettre à jour à la demande** : depuis le navigateur du téléphone, onglet Actions du dépôt,
-workflow « Briefing », Run workflow. La case `dry_run` affiche le résumé et le message dans le
-journal du lancement sans rien publier ni envoyer. En local : `python3
+workflow « Briefing », Run workflow. La case `dry_run` affiche le résumé dans le journal du
+lancement (le message Telegram, qui contient le lien, n'existe qu'après la publication) sans
+rien publier ni envoyer. En local : `python3
 "${CLAUDE_SKILL_DIR}/briefing_run.py" build --out-dir site --dry-run`.
 
 **Réglages faits une fois** : dépôt public, et dans Settings, Pages, Source « GitHub Actions ».

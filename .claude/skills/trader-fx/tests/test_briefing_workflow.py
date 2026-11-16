@@ -58,13 +58,29 @@ class TestBriefingWorkflow(unittest.TestCase):
         self.assertEqual(set(used), ACTIONS)
         self.assertEqual(len(used), 3)
 
-    def test_steps_run_in_order_checkout_build_upload_deploy_notify(self):
+    def test_steps_run_in_order_checkout_build_upload_deploy_notify_then_the_failure_notice(self):
         names = [s for s in self.steps]
         order = [next(i for i, s in enumerate(names) if needle in s)
                  for needle in ("actions/checkout", "briefing_run.py build", "upload-pages-artifact",
-                                "actions/deploy-pages", "briefing_run.py notify")]
+                                "actions/deploy-pages", "briefing_run.py notify", "briefing_run.py fail")]
         self.assertEqual(order, sorted(order))
-        self.assertEqual(len(set(order)), 5)
+        self.assertEqual(len(set(order)), 6)
+        self.assertEqual(len(names), 6)
+
+    def test_a_publication_failure_is_announced_once_and_never_after_a_build_failure(self):
+        self.assertIn("id: upload", self.step("upload-pages-artifact"))
+        fail = self.step("briefing_run.py fail")
+        # always(): the earlier step failed; only an upload or deploy failure (a failed build has
+        # already sent its own notice and never reaches those steps)
+        self.assertIn("always()", fail)
+        self.assertIn("inputs.dry_run != true", fail)
+        self.assertIn("steps.upload.outcome == 'failure'", fail)
+        self.assertIn("steps.deployment.outcome == 'failure'", fail)
+        self.assertNotIn("steps.build", fail)
+        self.assertIn(RUNNER + ' fail --reason "publication sur GitHub Pages en échec"', fail)
+        self.assertIn("TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}", fail)
+        self.assertIn("TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}", fail)
+        self.assertNotIn("TRADER_FX_CONFIG", fail)
 
     def test_upload_deploy_and_notify_are_skipped_on_a_dry_run(self):
         for needle in ("upload-pages-artifact", "actions/deploy-pages", "briefing_run.py notify"):
@@ -93,7 +109,7 @@ class TestBriefingWorkflow(unittest.TestCase):
 
     def test_secrets_are_read_only_through_env_and_never_echoed(self):
         refs = [l for l in self.lines if "secrets." in l]
-        self.assertEqual(len(refs), 5, refs)                          # three in build, two in notify
+        self.assertEqual(len(refs), 7, refs)                          # three in build, two in notify, two in fail
         for line in refs:
             self.assertRegex(line, r"^\s{10}[A-Z_]+: \$\{\{ secrets\.[A-Z_]+ \}\}$")
         for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TRADER_FX_CONFIG"):

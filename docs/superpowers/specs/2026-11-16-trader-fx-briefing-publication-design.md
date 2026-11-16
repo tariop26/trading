@@ -18,7 +18,7 @@ Critères de réussite :
 1. Aux deux heures, la page à `https://tariop26.github.io/trading/` est remplacée par le briefing du moment, et un message Telegram donne le résumé et le lien.
 2. Si le briefing échoue (Yahoo en panne), la page précédente reste en place, aucune page vide n'est publiée, et un message Telegram d'une ligne le dit.
 3. Le lancement peut se faire à la main depuis le navigateur du téléphone (Actions, Run workflow).
-4. `--dry-run` montre le message sans rien envoyer ni publier.
+4. `--dry-run` montre le résumé sans rien envoyer ni publier (le message de succès contient le lien de la page, connu seulement après la publication).
 5. Aucun secret dans les journaux, les messages ou la page. Aucun mot interdit dans les messages.
 
 ## 2. Hors périmètre
@@ -53,8 +53,9 @@ Un seul job `publish` (`timeout-minutes: 10`, `environment: github-pages`, `perm
    - en cas d'échec du briefing : n'écrit rien dans `site/`, envoie le message « Briefing indisponible » (voir 4), et se termine avec le code 1 ; le job s'arrête, rien n'est publié.
 3. `actions/upload-pages-artifact` sur `site/`, puis `actions/deploy-pages` (`id: deployment`) ; l'URL publiée sort de cette étape.
 4. `briefing_run.py notify --url "$PAGE_URL"` : envoie le message de succès.
+5. Si l'envoi du briefing à Pages échoue (étape `upload` ou `deploy`), `briefing_run.py fail --reason "publication sur GitHub Pages en échec"` envoie le message d'échec (même texte que 4, raison ci-contre). Un échec de `build` a déjà annoncé le sien et n'y mène pas.
 
-Avec `--dry-run`, `build` exécute le briefing, imprime le message et le résumé et n'écrit pas `site/` ; les étapes 3 et 4 portent `if: ${{ inputs.dry_run != true }}` et sont sautées (la condition est vraie pour un lancement planifié, dont `inputs` est vide).
+Avec `--dry-run`, `build` exécute le briefing, imprime le résumé et n'écrit pas `site/` ; les étapes 3, 4 et 5 portent `if: ${{ inputs.dry_run != true }}` et sont sautées (la condition est vraie pour un lancement planifié, dont `inputs` est vide).
 
 Versions des actions (vérifiées le 2026-11-16, toutes sur Node 24) : `actions/checkout@v6`, `actions/upload-pages-artifact@v5`, `actions/deploy-pages@v5`. Le serveur d'alertes passe aussi à `checkout@v6` et `cache@v5`.
 
@@ -67,7 +68,8 @@ Texte brut, français, heure UTC (le titre ne donne pas l'heure de Paris : elle 
 
 ## 5. Erreurs et sécurité
 
-- Un échec du briefing ne publie rien et n'écrase pas la page en ligne.
+- Un échec du briefing ne publie rien et n'écrase pas la page en ligne. `build` écrit d'abord des fichiers temporaires puis les met en place : une écriture qui échoue ne laisse ni fichier partiel ni page remplacée à moitié.
+- Un échec de l'envoi à Pages est annoncé par le message d'échec ; un lancement planifié qui n'a pas lieu, ou arrêté par le délai de 10 minutes, n'est pas annoncé (GitHub peut le signaler par e-mail).
 - Un échec d'envoi Telegram (`telegram.send_message`, avec sa nouvelle tentative) met le job en échec (code 1) sans défaire la publication, qui est déjà faite.
 - Le secret `TRADER_FX_CONFIG` (facultatif) fait calculer les tailles sur le vrai capital ; la page publique affiche alors la ligne « Compte : … USD · risque par idée … ». Sans lui, les valeurs par défaut s'appliquent et la ligne le dit déjà.
 - Les secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TRADER_FX_CONFIG`) ne sont lus que par `env:` dans le workflow, jamais dans une ligne `run:`, jamais affichés.

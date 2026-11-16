@@ -99,6 +99,8 @@ def build_parser():
     n = sub.add_parser("notify", parents=[common], help="envoie le lien et le résumé sur Telegram")
     n.add_argument("--url", required=True)
     n.add_argument("--summary-file", default=os.path.join(DEFAULT_OUT_DIR, "summary.txt"))
+    f = sub.add_parser("fail", parents=[common], help="annonce un échec de publication sur Telegram")
+    f.add_argument("--reason", required=True)
     return p
 
 
@@ -108,37 +110,60 @@ def _parse_now(text, deps):
     return deps["now"]() if "now" in deps else datetime.now(timezone.utc)
 
 
-def _announce_failure(args, now, reason, env, send):
-    """Send (or print, in a dry run) the failure notice; always an exit code of 1."""
+def _send_failure_notice(args, now, reason, env, send):
+    """Send (or print, in a dry run) the failure notice. -> True when it went out or was printed."""
     message = failure_message(now, reason)
     if args.dry_run:
         print(message)
-        return 1
+        return True
     token, chat = env.get("TELEGRAM_BOT_TOKEN", ""), env.get("TELEGRAM_CHAT_ID", "")
     if not (token and chat):
         print("%s Message Telegram non envoyé : secrets manquants." % message)
-        return 1
+        return False
     sent, why = send(token, chat, message)
     if not sent:
         print("Message Telegram non envoyé (%s)." % why)
-    else:
-        print(message)
+        return False
+    print(message)
+    return True
+
+
+def _announce_failure(args, now, reason, env, send):
+    """The build failed: announce it; the exit code of `build` is 1 either way."""
+    _send_failure_notice(args, now, reason, env, send)
     return 1
 
 
+def cmd_fail(args, now, env, send):
+    """A failure `build` cannot see (upload or deploy): announce it. 0 when the notice went out."""
+    return 0 if _send_failure_notice(args, now, args.reason, env, send) else 1
+
+
+def _write_file(path, content):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+
+
 def _write_site(out_dir, files):
-    """Write every file or none: on failure what this call wrote is removed. -> an error or None."""
+    """Write the files to temporary names first, then move them into place: a failure while
+    writing (disk full, encoding) leaves neither a partial file nor a replaced page. If a move
+    itself fails, the files this call created are removed again. -> an error line or None."""
     created_dir = not os.path.isdir(out_dir)
-    written = []
+    temps, created = [], []
     try:
         os.makedirs(out_dir, exist_ok=True)
         for name, content in files:
-            path = os.path.join(out_dir, name)
-            with open(path, "w", encoding="utf-8", newline="") as f:
-                f.write(content)
-            written.append(path)
-    except OSError:
-        for path in written:
+            temp = os.path.join(out_dir, name + ".tmp")
+            temps.append(temp)
+            _write_file(temp, content)
+        for (name, _), temp in zip(files, temps):
+            target = os.path.join(out_dir, name)
+            existed = os.path.exists(target)
+            os.replace(temp, target)
+            if not existed:
+                created.append(target)
+    except (OSError, UnicodeError):
+        for path in temps + created:
             with contextlib.suppress(OSError):
                 os.remove(path)
         if created_dir:
@@ -223,6 +248,8 @@ def main(argv=None, deps=None):
         return cmd_build(args, now, env, deps.get("brief", run_brief), send)
     if args.cmd == "notify":
         return cmd_notify(args, now, env, send)
+    if args.cmd == "fail":
+        return cmd_fail(args, now, env, send)
     print("Sous-commande inconnue : %s" % args.cmd)
     return 1
 
