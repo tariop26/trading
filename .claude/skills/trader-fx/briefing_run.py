@@ -194,7 +194,8 @@ def cmd_build(args, now, env, brief, send):
         return _announce_failure(args, now, reason, env, send)
 
     try:
-        files = [("index.html", page.render_page(document, fx.TEMPLATE)),
+        # a file of its own for Pages: it needs the doctype, charset and viewport (see page.standalone)
+        files = [("index.html", page.standalone(page.render_page(document, fx.TEMPLATE))),
                  ("summary.txt", briefing.render_summary(document) + "\n")]
     except Exception as e:  # noqa: BLE001
         return _announce_failure(args, now, "page impossible (%s)" % type(e).__name__, env, send)

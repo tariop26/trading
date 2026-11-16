@@ -134,7 +134,8 @@ contient le bloc « Idées de trade (N), plan mécanique à valider » (8 lignes
 plus, une par idée, puis la ligne « Risque cumulé »). La page web a sept
 sections : Trades potentiels (juste après l'en-tête), Résumé, Force des
 devises, Calendrier, Setups swing, Plan du jour, Avertissements. Thème clair et
-sombre, largeur mobile.
+sombre ; sur un écran de 640 px ou moins, chaque tableau devient une pile de cartes
+(une par ligne, un « libellé : valeur » par cellule), sans défilement sur le côté.
 
 ## Trades potentiels
 
@@ -426,6 +427,12 @@ La page précédente reste en ligne. »). Il en va de même si la publication su
 échoue (Pages non activé, panne de Pages) : la raison est « publication sur GitHub Pages en
 échec ». Un briefing qui n'arrive pas du tout (lancement planifié abandonné ou arrêté par le
 délai de 10 minutes) ne déclenche aucun message : seul GitHub peut le signaler par e-mail.
+
+**Lecture sur téléphone.** Le fichier publié est un document complet (`page.standalone` ajoute
+`<!doctype html>`, `<meta charset>` et `<meta name="viewport">`, que la plateforme des
+Artifacts fournit d'elle-même mais pas GitHub Pages ; sans la balise viewport un téléphone
+dessine la page à la largeur d'un écran de bureau, rétrécie). Sous 640 px les tableaux
+s'affichent en cartes. La page des Artifacts, elle, n'est pas modifiée.
 
 La page affiche son heure de production et un bandeau rouge « périmé » au bout de 12 heures.
 Comme il n'y a que deux briefings par jour, ce bandeau apparaît **sans panne** entre les

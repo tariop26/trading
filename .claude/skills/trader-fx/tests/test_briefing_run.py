@@ -140,7 +140,7 @@ class TestBuild(Harness):
     def test_build_writes_the_exact_page_and_the_summary(self):
         self.assertEqual(self.build(), 0, self.output)
         self.assertEqual(read(os.path.join(self.site, "index.html")),
-                         page.render_page(self.doc, fx.TEMPLATE))
+                         page.standalone(page.render_page(self.doc, fx.TEMPLATE)))
         self.assertEqual(read(os.path.join(self.site, "summary.txt")),
                          briefing.render_summary(self.doc) + "\n")
         self.assertEqual(self.sent, [])                          # `build` never announces a success

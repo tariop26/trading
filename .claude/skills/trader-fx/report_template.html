@@ -189,6 +189,22 @@
   ul.warnings li { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); font-size: 0.875rem; line-height: 1.55; overflow-wrap: anywhere; }
   footer { border-top: 1px solid var(--line); padding-top: 16px; font-size: 0.875rem; color: var(--muted); }
   footer strong { color: var(--ink); font-weight: 600; }
+
+  /* Phone: a table of many columns is read as a stack of cards, one per row, each cell a line
+     "label : value" (the label comes from data-label, set by table() in the script). No sideways
+     scrolling. The header row stays in the page for screen readers but is hidden visually. A cell
+     holding several elements (a price and a tag) keeps them together on the right. Tokens only. */
+  @media (max-width: 640px) {
+    .scroll { overflow-x: visible; background: transparent; border: 0; border-radius: 0; }
+    table, tbody, tr, td { display: block; width: 100%; }
+    thead { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    tr { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; margin-bottom: 10px; }
+    td { display: flex; align-items: baseline; justify-content: flex-end; gap: 8px; padding: 6px 0; text-align: right; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    tbody tr td { border-bottom: 1px solid var(--line); }
+    tbody tr td:last-child { border-bottom: 0; }
+    td::before { content: attr(data-label); flex: none; max-width: 45%; margin-right: auto; text-align: left; font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    td.wrap { min-width: 0; }
+  }
 </style>
 
 <main>
@@ -317,7 +333,9 @@
       var tr = h("tr");
       cols.forEach(function (c) {
         var v = c.cell(r);
-        tr.append(h("td", c.cls, v));
+        var td = h("td", c.cls, v);
+        td.setAttribute("data-label", c.label);   // the line label of the card on a phone
+        tr.append(td);
       });
       body.append(tr);
     });
