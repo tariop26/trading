@@ -8,7 +8,7 @@ import alerts_run
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "alerts.yml")
-PINNED = {"actions/checkout@v4", "actions/cache/restore@v4", "actions/cache/save@v4"}
+PINNED = {"actions/checkout@v6", "actions/cache/restore@v5", "actions/cache/save@v5"}
 
 
 def read_workflow():

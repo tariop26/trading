@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Restore the alert state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: trader/fx/alerts_state.json
           key: alerts-state-${{ github.run_id }}
@@ -48,7 +48,7 @@ jobs:
           fi
       - name: Save the alert state
         if: ${{ always() && steps.run.outputs.state_changed == 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: trader/fx/alerts_state.json
           key: alerts-state-${{ github.run_id }}
