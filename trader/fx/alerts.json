@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "updated": "2026-11-16T10:49:50.046869+00:00",
+  "rules": [
+    {
+      "id": "2026-11-16-_FCHI-1-stop",
+      "trade_id": "2026-11-16-_FCHI-1",
+      "symbol": "^FCHI",
+      "type": "stop",
+      "side": "baissier",
+      "level": 8405.0,
+      "decimals": 2,
+      "since": "2026-11-16T10:49:50.018047+00:00"
+    },
+    {
+      "id": "2026-11-16-_FCHI-1-cible",
+      "trade_id": "2026-11-16-_FCHI-1",
+      "symbol": "^FCHI",
+      "type": "cible",
+      "side": "baissier",
+      "level": 8295.0,
+      "decimals": 2,
+      "since": "2026-11-16T10:49:50.018047+00:00"
+    }
+  ]
+}
