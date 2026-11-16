@@ -180,7 +180,8 @@ def cmd_build(args, now, env, brief, send):
     problem = _write_site(args.out_dir, files)
     if problem:
         return _announce_failure(args, now, problem, env, send)
-    print("Page écrite : %s (%d octets)." % (os.path.join(args.out_dir, "index.html"), len(files[0][1])))
+    print("Page écrite : %s (%d octets)." % (os.path.join(args.out_dir, "index.html"),
+                                                   len(files[0][1].encode("utf-8"))))
     return 0
 
 
