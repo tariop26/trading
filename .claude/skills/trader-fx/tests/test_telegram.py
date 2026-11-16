@@ -1,6 +1,7 @@
 import _path  # noqa
 import io
 import json
+import os
 import unittest
 import urllib.error
 from unittest import mock
@@ -8,7 +9,7 @@ from unittest import mock
 import telegram
 
 TOKEN = "123456:SECRET-token-value"
-CHAT = "540412883"
+CHAT = "123456789"
 
 
 class Fake:
@@ -80,6 +81,16 @@ class TestSend(unittest.TestCase):
             f = Fake((code, '{"ok":false}'))
             self.assertEqual(f.send(), (False, "HTTP %d" % code))
             self.assertEqual((len(f.calls), f.sleeps), (1, []))
+
+
+class TestNoRealIdentifiers(unittest.TestCase):
+    def test_the_real_chat_id_is_not_in_the_tests(self):
+        real = "5404" + "12883"               # built in two parts: this file must not contain it
+        here = os.path.dirname(os.path.abspath(__file__))
+        for name in os.listdir(here):
+            if name.endswith(".py"):
+                with open(os.path.join(here, name), encoding="utf-8") as f:
+                    self.assertNotIn(real, f.read(), name)
 
 
 class TestNoSecretLeaks(unittest.TestCase):
