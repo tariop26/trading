@@ -1,0 +1,67 @@
+# Published briefing of trader-fx: builds the briefing page, publishes it on GitHub Pages and
+# announces the link and the summary on Telegram.
+# Runs at 04:30 UTC Monday to Friday and at 22:15 UTC Sunday to Thursday (GitHub cron is UTC, so
+# Paris time moves with daylight saving), and by hand from the Actions tab (tick "dry_run" to
+# print the summary and the message without publishing or sending anything).
+# A failed briefing publishes nothing: the page already online stays. Secrets go through env only.
+name: Briefing
+
+on:
+  schedule:
+    - cron: "30 4 * * 1-5"
+    - cron: "15 22 * * 0-4"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Afficher le briefing et le message sans rien publier ni envoyer"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: briefing
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the briefing page
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TRADER_FX_CONFIG: ${{ secrets.TRADER_FX_CONFIG }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 .claude/skills/trader-fx/briefing_run.py build --out-dir site --dry-run
+          else
+            python3 .claude/skills/trader-fx/briefing_run.py build --out-dir site
+          fi
+      - name: Upload the page
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/deploy-pages@v5
+      - name: Announce on Telegram
+        if: ${{ inputs.dry_run != true }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python3 .claude/skills/trader-fx/briefing_run.py notify --url "$PAGE_URL"

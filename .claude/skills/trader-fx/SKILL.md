@@ -20,14 +20,17 @@ description: >-
   de stop et de cible des trades ouverts (alerts.json) et une page « Journal
   de trading ». Un serveur d'alertes sur GitHub Actions surveille les stops et
   les cibles, annonce les annonces à fort impact et les idées de trade en
-  formation, et écrit sur Telegram. Use when the user says "briefing forex", "scan
+  formation, et écrit sur Telegram. Un briefing automatique publie la page du
+  briefing sur GitHub Pages (lisible sur téléphone) à 04 h 30 et 22 h 15 UTC et
+  envoie le lien et le résumé sur Telegram. Use when the user says "briefing forex", "scan
   forex", "force des devises", "calendrier économique", "matières premières",
   "indices", "briefing CFD", "trades potentiels", "taille de position", "idées
   de trade", "journal de trading", "statistiques de trades", "j'ai pris
   l'idée", "forex briefing", "currency strength", "economic calendar", "what
   is moving in forex", "commodities and indices scan", "trade ideas", "position
   size", "lot size", "trading journal", "trade stats", "serveur d'alertes", "alertes Telegram",
-  "alert server", "Telegram alerts", or at the start of a
+  "alert server", "Telegram alerts", "briefing automatique", "briefing sur
+  téléphone", "auto briefing", "briefing on my phone", or at the start of a
   forex / CFD trading day.
 argument-hint: "[brief | page] [--list FILE] [--no-cache] [--json] [--config PATH] ; journal.py [open | amend | close | list | stats | alerts | page]"
 ---
@@ -77,6 +80,7 @@ n'est reçu, ou si la configuration est invalide, aucun `briefing.json` n'est
 | `trader/fx/journal.json.bak` | copie de la version précédente du journal, faite avant chaque écriture de `open`, `amend` et `close`. Ignorée par git |
 | `trader/fx/alerts.json` | écrit par `journal.py` après chaque `open`, `amend` et `close` (et par `journal.py alerts`) : les niveaux de stop et de cible des trades ouverts, avec `since` (depuis quand surveiller) ; poussé sur `main` si `alerts.auto_push` ; lu par le serveur d'alertes. Versionné par git |
 | `trader/fx/alerts_state.json` | écrit par `alerts_run.py` : ce qui a déjà été envoyé (idées du jour, règles déclenchées, annonces, jour de la dernière alerte de panne). Sur GitHub il vit dans le cache d'Actions. Ignoré par git |
+| `site/` | écrit par `briefing_run.py build` : `index.html` (la page du briefing) et `summary.txt` (le résumé texte). Publié sur GitHub Pages par le workflow ; jamais commité (ignoré par git) |
 | `trader/fx/journal.html` | écrit par `journal.py page` : page « Journal de trading », données intégrées, aucun appel réseau. Contient les résultats : ignorée par git, à publier en Artifact privé seulement |
 
 `briefing.json` et `briefing.html` sont des sorties du jour, ignorées par git.
@@ -351,8 +355,8 @@ Statistiques, Trades clôturés) ; elle contient les résultats de l'utilisateur
 `alerts_run.py` est un lancement du serveur ; le workflow `.github/workflows/alerts.yml`
 l'appelle sur GitHub Actions **toutes les 15 minutes, de 07 h à 21 h 45 UTC, du lundi
 au vendredi** (le cron de GitHub est en UTC et peut avoir quelques minutes de retard).
-Il coûte environ 1 200 minutes par mois, sous les 2 000 minutes gratuites d'un dépôt
-privé. Tous les calculs sont en Python, sans appel à Claude. Un lancement :
+Il coûte environ 1 200 minutes par mois (gratuit tant que le dépôt est public ; sous les
+2 000 minutes gratuites s'il redevenait privé). Tous les calculs sont en Python, sans appel à Claude. Un lancement :
 
 1. lit `trader/fx/alerts.json` (les règles de stop et de cible des trades ouverts) ;
 2. **stop ou cible touché** : lit les barres de 5 minutes de chaque symbole et compare
@@ -400,6 +404,42 @@ nouveaux niveaux, et un trade clôturé continue de déclencher des alertes de s
 chez le courtier » : le stop réel reste chez le courtier. Le calendrier est un flux non
 officiel. GitHub peut retarder un lancement planifié ; rien ne prévient si le
 planificateur s'arrête. Les idées en séance viennent d'une barre du jour en formation.
+
+## Briefing publié
+
+Le briefing se met à jour tout seul sur GitHub, sans que le PC soit allumé, et se lit sur
+le téléphone. Le workflow `.github/workflows/briefing.yml` se lance à **04 h 30 UTC du lundi
+au vendredi** et à **22 h 15 UTC du dimanche au jeudi** (le cron de GitHub est en UTC : l'heure
+de Paris avance ou recule d'une heure avec l'heure d'été, donc 05 h 30 l'hiver et 06 h 30
+l'été pour le premier). Un lancement :
+
+1. `briefing_run.py build --out-dir site` lance `fx.py brief --no-cache`, construit la page avec
+   le gabarit du briefing et écrit `site/index.html` et `site/summary.txt` ;
+2. les actions Pages publient `site/` : le lien est `https://tariop26.github.io/trading/`, à
+   mettre en favori sur le téléphone ; chaque briefing remplace la page précédente ;
+3. `briefing_run.py notify --url ...` envoie sur Telegram un message : le titre
+   (« Briefing marchés, AAAA-MM-JJ HH:MM UTC. »), le lien, puis le résumé (40 lignes au plus).
+
+Si le briefing échoue (par exemple Yahoo en panne), rien n'est publié : **la page précédente
+reste en ligne**, et un message Telegram d'une ligne le dit (« Briefing indisponible (…) : …
+La page précédente reste en ligne. »). La page affiche son heure de production et un bandeau
+rouge « périmé » au bout de 12 heures. Le week-end la page est publiée aussi, avec la mention
+« Marché fermé (week-end) ».
+
+**Mettre à jour à la demande** : depuis le navigateur du téléphone, onglet Actions du dépôt,
+workflow « Briefing », Run workflow. La case `dry_run` affiche le résumé et le message dans le
+journal du lancement sans rien publier ni envoyer. En local : `python3
+"${CLAUDE_SKILL_DIR}/briefing_run.py" build --out-dir site --dry-run`.
+
+**Réglages faits une fois** : dépôt public, et dans Settings, Pages, Source « GitHub Actions ».
+Les secrets sont les mêmes que pour le serveur d'alertes (`TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`, et `TRADER_FX_CONFIG` facultatif).
+
+**Ce que la page publique montre.** Seul le briefing est publié : jamais le journal, `alerts.json`
+ni la configuration. Mais comme le dépôt est public, tout le monde peut lire la page, y compris
+la ligne « Compte : … USD · risque par idée … » : avec le secret `TRADER_FX_CONFIG` c'est le
+capital réel de l'utilisateur (ici un compte de prop firm, accepté), sans lui 100 000 USD par
+défaut. Les messages Telegram ne contiennent aucun secret.
 
 ## Étapes pour Claude
 
@@ -450,6 +490,10 @@ planificateur s'arrête. Les idées en séance viennent d'une barre du jour en f
    `open`, `amend` ou `close`, `alerts.json` est réécrit ; si la sortie dit
    « alerts.json non poussé », le dire et proposer de le pousser (ne jamais pousser
    sans que l'utilisateur l'ait demandé ou ait activé `alerts.auto_push`).
+7. Briefing automatique. Quand l'utilisateur veut le briefing sur son téléphone ou sans
+   le PC, lui donner le lien de la page (voir « Briefing publié ») et lui dire de lancer
+   le workflow « Briefing » à la main depuis l'onglet Actions pour une mise à jour
+   immédiate. Ne pas publier un Artifact à la place : la page automatique existe déjà.
 
 ## Règles
 
@@ -573,9 +617,12 @@ que l'utilisateur ne donne pas est demandé ou reste « inconnu ».
 - Le serveur d'alertes lit ses secrets dans l'environnement GitHub et ne les affiche
   jamais ; les erreurs Telegram ne donnent que le code HTTP. `alerts.auto_push` ne
   pousse que `alerts.json` (des niveaux, pas de résultats).
-- `journal.json` et `journal.html` contiennent les résultats de l'utilisateur :
-  ne pousser le dépôt que vers un dépôt privé, et ne publier la page qu'en
-  Artifact privé.
+- Le dépôt est **public** (compte de prop firm, accepté par l'utilisateur) : tout ce qui
+  est commité est lisible par tous, y compris `alerts.json` (niveaux et symboles des
+  trades ouverts) et la page du briefing sur GitHub Pages (avec la ligne « Compte »). Ne
+  jamais commiter `trader/fx/config.json`, et ne pas commiter `journal.json` ni
+  `journal.html` (ils contiennent les résultats) sans que l'utilisateur l'ait décidé ;
+  ne publier `journal.html` qu'en Artifact privé.
 - Les comptes CFD et forex de particuliers perdent couramment de l'argent, et
   le levier amplifie les pertes. Commencer par un compte de démonstration
   (paper trading) avant tout compte réel.
