@@ -257,5 +257,94 @@ class TestEverything(Harness):
         self.assertIn("(2026-11-16 22:15 UTC)", self.sent[0][2])
 
 
+class TestSuccessMessage(unittest.TestCase):
+    HEAD = "Briefing marchés, 2026-11-16 04:30 UTC.\nPage : " + URL
+
+    def test_the_link_comes_before_the_summary(self):
+        self.assertEqual(briefing_run.success_message(NOW, URL, "Ligne 1\nLigne 2\n"),
+                         self.HEAD + "\n\nLigne 1\nLigne 2")
+
+    def test_an_empty_summary_gives_the_title_and_the_link_only(self):
+        for summary in ("", "\n", "  \n"):
+            self.assertEqual(briefing_run.success_message(NOW, URL, summary), self.HEAD)
+
+    def test_a_10000_character_summary_is_clipped_under_4096_and_keeps_the_link(self):
+        text = briefing_run.success_message(NOW, URL, "x" * 10000)
+        self.assertLessEqual(len(text), briefing_run.TELEGRAM_CLIP)
+        self.assertLess(len(text), 4096)
+        self.assertTrue(text.startswith(self.HEAD + "\n\n"))
+        self.assertTrue(text.endswith("…"))
+
+    def test_special_characters_stay_as_they_are(self):
+        summary = 'Core <CPI> & "m/m" <!-- x'
+        self.assertTrue(briefing_run.success_message(NOW, URL, summary).endswith(summary))
+
+    def test_a_summary_just_under_the_limit_is_not_clipped(self):
+        room = briefing_run.TELEGRAM_CLIP - len(self.HEAD + "\n\n")
+        text = briefing_run.success_message(NOW, URL, "y" * room)
+        self.assertEqual(len(text), briefing_run.TELEGRAM_CLIP)
+        self.assertFalse(text.endswith("…"))
+
+
+class TestNotify(Harness):
+    def setUp(self):
+        super().setUp()
+        self.summary = os.path.join(self.dir, "summary.txt")
+        with open(self.summary, "w", encoding="utf-8") as f:
+            f.write("Briefing FX : 08:30 New York\nReçus : 104 sur 104\n")
+
+    def notify(self, *extra, now=NOW):
+        return self.run_main("notify", "--url", URL, "--summary-file", self.summary, *extra, now=now)
+
+    def test_notify_sends_the_link_and_the_summary(self):
+        self.assertEqual(self.notify(), 0, self.output)
+        self.assertEqual(self.sent, [("tok-SECRET", "42", briefing_run.success_message(
+            NOW, URL, "Briefing FX : 08:30 New York\nReçus : 104 sur 104\n"))])
+        self.assertNotIn("SECRET", self.output)
+
+    def test_missing_summary_file_is_one_line_exit_1(self):
+        os.remove(self.summary)
+        self.assertEqual(self.notify(), 1)
+        self.assertEqual(len(self.output.strip().splitlines()), 1)
+        self.assertIn(self.summary, self.output)
+        self.assertEqual(self.sent, [])
+
+    def test_empty_summary_file_still_sends_title_and_link(self):
+        open(self.summary, "w").close()
+        self.assertEqual(self.notify(), 0)
+        self.assertEqual(self.sent[0][2], TestSuccessMessage.HEAD)
+
+    def test_missing_telegram_secrets_exit_1_except_in_dry_run(self):
+        self.env.clear()
+        self.assertEqual(self.notify(), 1)
+        self.assertEqual(self.sent, [])
+        self.assertIn("TELEGRAM_BOT_TOKEN", self.output)
+        self.assertEqual(self.notify("--dry-run"), 0)
+
+    def test_send_failure_exit_1_without_the_token_in_the_output(self):
+        self.send_result = (False, "HTTP 500")
+        self.assertEqual(self.notify(), 1)
+        self.assertIn("HTTP 500", self.output)
+        self.assertNotIn("SECRET", self.output)
+        self.assertEqual(len(self.output.strip().splitlines()), 1)
+
+    def test_dry_run_prints_the_message_and_sends_nothing(self):
+        self.assertEqual(self.notify("--dry-run"), 0)
+        self.assertEqual(self.sent, [])
+        self.assertIn("Page : " + URL, self.output)
+        self.assertIn("Reçus : 104 sur 104", self.output)
+
+    def test_the_url_is_required(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                briefing_run.main(["notify"], self.deps())
+
+    def test_a_message_built_from_the_fixture_summary_has_no_forbidden_word(self):
+        summary = briefing.render_summary(self.doc)
+        text = briefing_run.success_message(NOW, URL, summary)
+        self.assertIsNone(FORBIDDEN.search(text), text)
+        self.assertLessEqual(len(text), briefing_run.TELEGRAM_CLIP)
+
+
 if __name__ == "__main__":
     unittest.main()

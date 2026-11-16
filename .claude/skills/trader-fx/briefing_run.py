@@ -33,6 +33,7 @@ import telegram  # noqa: E402
 DEFAULT_OUT_DIR = "site"
 DEFAULT_CONFIG = "trader/fx/config.json"
 REASON_CLIP = 200
+TELEGRAM_CLIP = 4000
 
 
 def _utf8_streams():
@@ -76,16 +77,28 @@ def run_brief(config_path):
             return None, "briefing illisible"
 
 
+def success_message(now, url, summary):
+    """Title, the page link, then the summary: the link survives any clipping of the summary."""
+    head = "%s\nPage : %s" % (title(now), url)
+    body = summary.strip("\n").strip()
+    text = head + ("\n\n" + summary.rstrip() if body else "")
+    if len(text) > TELEGRAM_CLIP:
+        text = text[:TELEGRAM_CLIP - 1] + "…"
+    return text
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="briefing_run.py", description="briefing publié sur GitHub Pages")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--dry-run", action="store_true")
+    common.add_argument("--now", help='heure UTC "AAAA-MM-JJ HH:MM" (pour les essais)')
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("build",):
-        s = sub.add_parser(name)
-        s.add_argument("--dry-run", action="store_true")
-        s.add_argument("--now", help='heure UTC "AAAA-MM-JJ HH:MM" (pour les essais)')
-    b = sub.choices["build"]
+    b = sub.add_parser("build", parents=[common], help="construit la page et le résumé")
     b.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     b.add_argument("--config", default=DEFAULT_CONFIG)
+    n = sub.add_parser("notify", parents=[common], help="envoie le lien et le résumé sur Telegram")
+    n.add_argument("--url", required=True)
+    n.add_argument("--summary-file", default=os.path.join(DEFAULT_OUT_DIR, "summary.txt"))
     return p
 
 
@@ -171,6 +184,29 @@ def cmd_build(args, now, env, brief, send):
     return 0
 
 
+def cmd_notify(args, now, env, send):
+    token, chat = env.get("TELEGRAM_BOT_TOKEN", ""), env.get("TELEGRAM_CHAT_ID", "")
+    if not args.dry_run and not (token and chat):
+        print("Secrets Telegram manquants : TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID.")
+        return 1
+    try:
+        with open(args.summary_file, encoding="utf-8") as f:
+            summary = f.read()
+    except OSError:
+        print("Résumé introuvable : %s." % args.summary_file)
+        return 1
+    message = success_message(now, args.url, summary)
+    if args.dry_run:
+        print("---\n%s\n---" % message)
+        return 0
+    sent, reason = send(token, chat, message)
+    if not sent:
+        print("Envoi Telegram échoué (%s)." % reason)
+        return 1
+    print("Message Telegram envoyé.")
+    return 0
+
+
 def main(argv=None, deps=None):
     _utf8_streams()
     deps = dict(deps or {})
@@ -184,6 +220,8 @@ def main(argv=None, deps=None):
     send = deps.get("send", telegram.send_message)
     if args.cmd == "build":
         return cmd_build(args, now, env, deps.get("brief", run_brief), send)
+    if args.cmd == "notify":
+        return cmd_notify(args, now, env, send)
     print("Sous-commande inconnue : %s" % args.cmd)
     return 1
 
