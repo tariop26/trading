@@ -23,7 +23,7 @@ class TestAlertsWorkflow(unittest.TestCase):
 
     def test_schedule_is_every_15_minutes_in_session_on_weekdays_utc(self):
         crons = re.findall(r'^\s*- cron: "([^"]+)"\s*$', self.text, re.M)
-        self.assertEqual(crons, ["*/15 7-21 * * 1-5"])
+        self.assertEqual(crons, ["7,22,37,52 7-21 * * 1-5"])
 
     def test_manual_run_has_a_boolean_dry_run_input(self):
         self.assertRegex(self.text, r"(?m)^  workflow_dispatch:\n    inputs:\n      dry_run:")

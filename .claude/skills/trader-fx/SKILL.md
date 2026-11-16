@@ -354,7 +354,7 @@ Statistiques, Trades clôturés) ; elle contient les résultats de l'utilisateur
 ## Serveur d'alertes
 
 `alerts_run.py` est un lancement du serveur ; le workflow `.github/workflows/alerts.yml`
-l'appelle sur GitHub Actions **toutes les 15 minutes, de 07 h à 21 h 45 UTC, du lundi
+l'appelle sur GitHub Actions **toutes les 15 minutes (à :07, :22, :37 et :52), de 07 h 07 à 21 h 52 UTC, du lundi
 au vendredi** (le cron de GitHub est en UTC et peut avoir quelques minutes de retard).
 Il coûte environ 1 200 minutes par mois (gratuit tant que le dépôt est public ; sous les
 2 000 minutes gratuites s'il redevenait privé). Tous les calculs sont en Python, sans appel à Claude. Un lancement :
