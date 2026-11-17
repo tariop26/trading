@@ -12,3 +12,6 @@ trader/fx/journal.html
 trader/fx/alerts_state.json
 site/
 trader/fx/journal.json
+
+# Relevés de positions MQL5 (données tierces, ne pas committer)
+*.positions.csv

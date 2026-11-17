@@ -407,6 +407,11 @@ class TestNow(Harness):
 
 
 class TestSignals(Harness):
+    def setUp(self):
+        super().setUp()
+        with open(self.config, "w", encoding="utf-8") as fh:      # les signaux sont désactivés par défaut
+            fh.write('{"intraday": {"enabled": true}}')
+
     def run_signal(self, *extra, now=SIGNAL_NOW):
         return self.run_main(*extra, now=now)
 
@@ -497,7 +502,7 @@ class TestSignals(Harness):
 
     def test_secret_config_capital_never_printed_in_logs(self):
         self.london_break_setup()
-        self.env["TRADER_FX_CONFIG"] = SECRET_CONFIG
+        self.env["TRADER_FX_CONFIG"] = SECRET_CONFIG[:-1] + ', "intraday": {"enabled": true}}'
         self.assertEqual(self.run_signal(), 0, self.output)
         self.assertEqual(len(self.signal_texts()), 1)                    # premise
         self.assertNotIn("250000", self.output)
