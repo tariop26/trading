@@ -111,5 +111,33 @@ class SessionTableTest(unittest.TestCase):
         self.assertEqual(winter["open_paris"], "21:00")
 
 
+class OpenUtcTests(unittest.TestCase):
+    def test_london_winter_and_summer(self):
+        self.assertEqual(sessions.open_utc("London", utc(2026, 11, 16, 12)), utc(2026, 11, 16, 8))
+        self.assertEqual(sessions.open_utc("London", utc(2026, 7, 15, 12)), utc(2026, 7, 15, 7))
+
+    def test_new_york_winter(self):
+        self.assertEqual(sessions.open_utc("New York", utc(2026, 11, 16, 12)), utc(2026, 11, 16, 13))
+
+    def test_week_where_europe_and_us_differ(self):
+        # Europe is back on winter time (25 Oct), the US still on summer time (until 1 Nov)
+        now = utc(2026, 10, 28, 12)
+        self.assertEqual(sessions.open_utc("New York", now), utc(2026, 10, 28, 12))
+        self.assertEqual(sessions.open_utc("London", now), utc(2026, 10, 28, 8))
+
+    def test_result_is_aware_utc(self):
+        got = sessions.open_utc("Tokyo", utc(2026, 11, 16, 12))
+        self.assertEqual(got.utcoffset().total_seconds(), 0)
+        self.assertEqual(got, utc(2026, 11, 16, 0))
+
+    def test_uses_local_date_of_the_session(self):
+        # 2026-11-16 23:30 UTC is already 17 Nov in Tokyo
+        self.assertEqual(sessions.open_utc("Tokyo", utc(2026, 11, 16, 23, 30)), utc(2026, 11, 17, 0))
+
+    def test_unknown_session(self):
+        with self.assertRaises(KeyError):
+            sessions.open_utc("Mars", utc(2026, 11, 16, 12))
+
+
 if __name__ == "__main__":
     unittest.main()

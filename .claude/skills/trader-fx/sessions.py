@@ -40,6 +40,15 @@ def _local_at(day, hour, tz):
     return datetime(day.year, day.month, day.day, hour, 0, tzinfo=tz)
 
 
+def open_utc(name, now_utc):
+    """UTC open (aware datetime) of session `name` on the local date of `now_utc` in that
+    session's timezone. KeyError for a name that is not in SESSIONS."""
+    tzname, open_h, _ = SESSIONS[name]
+    tz = ZoneInfo(tzname)
+    day = _aware_utc(now_utc).astimezone(tz).date()
+    return _local_at(day, open_h, tz).astimezone(timezone.utc)
+
+
 def session_table(now_utc):
     """One entry per session for its own local date of `now_utc`."""
     now = _aware_utc(now_utc)
