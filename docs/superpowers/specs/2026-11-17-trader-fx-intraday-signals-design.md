@@ -5,7 +5,7 @@ S'appuie sur `2026-11-13-trader-fx-briefing-design.md`, `2026-11-14-trader-fx-tr
 
 ## 1. Contexte et objectif
 
-Aujourd'hui l'utilisateur reçoit l'alerte du matin (briefing publié) mais aucune alerte de trade pendant la journée. Cause probable (non vérifiée) : les idées viennent de règles sur barres **journalières**, qui bougent peu en séance ; sans trade ouvert, il n'y a ni alerte de stop ou de cible ni d'annonce à fort impact.
+Aujourd'hui l'utilisateur reçoit le briefing du matin et, rarement, des alertes d'idées : il en a reçu deux dans la nuit (EUR/JPY baissier `lose_ma20`, EUR/SGD baissier `breakdown_20d`). Le serveur fonctionne. Mais ces idées viennent de règles sur barres **journalières** : elles sortent peu et tard, quand la barre du jour a fini de se former, et au plus une fois par jour pour chaque paire et chaque sens. Sans trade ouvert, il n'y a ni alerte de stop ou de cible ni d'annonce. Aucune alerte n'est construite sur les mouvements en séance.
 
 Objectif : que le serveur d'alertes détecte seul, en cours de séance, des trades sur forex, matières premières et indices (CFD), et les envoie sur Telegram avec un plan que l'utilisateur saisit **à la main** dans MetaTrader 5.
 
