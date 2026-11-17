@@ -9,6 +9,9 @@ import json
 import math
 import os
 
+# Intraday signal families, in priority order.
+INTRADAY_FAMILIES = ("session_break", "bb_return", "fractal_break", "engulfing", "rsi_exit")
+
 DEFAULTS = {
     "account": {"currency": "USD", "capital": 100000},
     "risk": {"per_trade_pct": 0.5, "max_total_pct": 2.0},
@@ -17,6 +20,33 @@ DEFAULTS = {
     "ideas": {"max_shown": 5, "max_per_exposure": 2},
     "contracts": {},
     "alerts": {"auto_push": False},
+    "intraday": {
+        "enabled": True,
+        "symbols": [],
+        "mt5_symbols": {},
+        "families": list(INTRADAY_FAMILIES),
+        "range_minutes": 30,
+        "break_window_hours": 3,
+        "bb_period": 20,
+        "bb_std": 2.0,
+        "rsi_period": 14,
+        "rsi_low": 30,
+        "rsi_high": 70,
+        "engulfing_min_prior": 3,
+        "min_stop_pct": 0.05,
+        "max_stop_daily_atr": 1.0,
+        "min_rr": 1.0,
+        "score_per_signal": 2,
+        "score_trend": 1,
+        "window_bars": 4,
+        "max_age_minutes": 30,
+        "validity_r": 0.25,
+        "max_per_run": 3,
+        "max_per_day": 10,
+        "max_per_exposure": 2,
+        "cooldown_minutes": 120,
+        "min_score": None,
+    },
 }
 
 CONTRACT_KEYS = ("usd_per_point", "step", "min")
@@ -83,6 +113,73 @@ def _contracts(value):
     return out
 
 
+# key -> (lo, hi, lo_open, integer) for the plain numeric intraday keys.
+INTRADAY_BOUNDS = {
+    "break_window_hours": (1, 6, False, False),
+    "bb_period": (5, 100, False, True),
+    "bb_std": (1, 4, False, False),
+    "rsi_period": (5, 50, False, True),
+    "rsi_low": (5, 50, False, False),
+    "rsi_high": (50, 95, False, False),
+    "engulfing_min_prior": (1, 6, False, True),
+    "min_stop_pct": (0, 1, True, False),
+    "max_stop_daily_atr": (0, 5, True, False),
+    "min_rr": (0.5, 5, False, False),
+    "score_per_signal": (1, 5, False, True),
+    "score_trend": (0, 3, False, True),
+    "window_bars": (1, 12, False, True),
+    "max_age_minutes": (15, 120, False, True),
+    "validity_r": (0, 1, True, False),
+    "max_per_run": (1, 10, False, True),
+    "max_per_day": (1, 50, False, True),
+    "max_per_exposure": (1, 5, False, True),
+    "cooldown_minutes": (0, 720, False, True),
+}
+
+
+def _is_text(v):
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _intraday(cfg):
+    intra = _section(cfg, "intraday")
+    if not isinstance(intra["enabled"], bool):
+        raise ConfigError("La valeur de intraday.enabled doit être true ou false.")
+
+    symbols = intra["symbols"]
+    if not isinstance(symbols, list) or not all(_is_text(s) for s in symbols):
+        raise ConfigError("La valeur de intraday.symbols doit être une liste de symboles "
+                          "(textes non vides).")
+
+    mt5 = intra["mt5_symbols"]
+    if (not isinstance(mt5, dict)
+            or not all(_is_text(k) and _is_text(v) for k, v in mt5.items())):
+        raise ConfigError("La valeur de intraday.mt5_symbols doit être un objet associant "
+                          "un symbole à un nom MT5 (textes non vides).")
+
+    families = intra["families"]
+    if (not isinstance(families, list) or not families
+            or not all(isinstance(f, str) and f in INTRADAY_FAMILIES for f in families)
+            or len(set(families)) != len(families)):
+        raise ConfigError("La valeur de intraday.families doit être une liste non vide, sans "
+                          "doublon, de familles parmi " + ", ".join(INTRADAY_FAMILIES) + ".")
+
+    minutes = _num("intraday.range_minutes", intra["range_minutes"], lo=15, hi=120, integer=True)
+    if minutes % 15:
+        raise ConfigError("La valeur de intraday.range_minutes doit être un multiple de 15 "
+                          f"(reçu {minutes}).")
+    intra["range_minutes"] = minutes
+
+    for key, (lo, hi, lo_open, integer) in INTRADAY_BOUNDS.items():
+        intra[key] = _num(f"intraday.{key}", intra[key], lo=lo, hi=hi,
+                          lo_open=lo_open, integer=integer)
+
+    score = intra["min_score"]
+    if score is not None and (isinstance(score, bool) or not isinstance(score, int)):
+        raise ConfigError("La valeur de intraday.min_score doit être un nombre entier ou null.")
+    return intra
+
+
 def validate(cfg):
     """Merge cfg over the defaults (section by section) and return a validated copy."""
     if not isinstance(cfg, dict):
@@ -126,6 +223,8 @@ def validate(cfg):
     if not isinstance(alerts["auto_push"], bool):
         raise ConfigError("La valeur de alerts.auto_push doit être true ou false.")
     out["alerts"] = alerts
+
+    out["intraday"] = _intraday(cfg)
     return out
 
 
