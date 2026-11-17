@@ -480,5 +480,412 @@ class RsiExitTests(unittest.TestCase):
             S.atr_bars = orig
 
 
+ENG = {"engulfing_min_prior": 3, "stop_atr_mult": 1.5}
+
+
+def obars(rows):
+    """Bars from (o, h, l, c) rows, 15 minutes apart from 08:00 UTC."""
+    return make_bars(utc(2026, 11, 16, 8), rows)
+
+
+# i - 3 .. i - 1 bearish (bar 0 is bullish and outside the run), bar 4 a bullish engulfing
+# whose low (1.1000) is below the low of bar 3 (1.1005): the stop tells i from i - 1.
+BULL_ENG = [
+    (1.1000, 1.1010, 1.0995, 1.1008),
+    (1.1030, 1.1032, 1.1018, 1.1025),
+    (1.1025, 1.1027, 1.1012, 1.1020),
+    (1.1020, 1.1022, 1.1005, 1.1010),
+    (1.1008, 1.1030, 1.1000, 1.1025),
+]
+# mirror: three bullish bars then a bearish engulfing whose high (1.1020) is above bar 3's.
+BEAR_ENG = [
+    (1.1010, 1.1015, 1.1000, 1.1002),
+    (1.0990, 1.1002, 1.0988, 1.0995),
+    (1.0995, 1.1008, 1.0993, 1.1003),
+    (1.1003, 1.1015, 1.1001, 1.1012),
+    (1.1015, 1.1020, 1.0990, 1.1000),
+]
+
+
+class SignalHelperTests(unittest.TestCase):
+    def test_signal_builds_the_standard_dict(self):
+        self.assertEqual(S._signal("engulfing", "haussier", 4, 1.1, None),
+                         {"family": "engulfing", "side": "haussier", "i": 4,
+                          "stop_raw": 1.1, "target_raw": None, "detail": ""})
+        self.assertEqual(S._signal("session_break", "baissier", 2, 1.2, 1.0, "Londres"),
+                         {"family": "session_break", "side": "baissier", "i": 2,
+                          "stop_raw": 1.2, "target_raw": 1.0, "detail": "Londres"})
+
+
+class EngulfingTests(unittest.TestCase):
+    def test_engulfing_bullish(self):
+        bars = obars(BULL_ENG)
+        i = 4
+        for k in (1, 2, 3):  # premise: the three prior bars are bearish (c < o)
+            self.assertLess(bars[k][4], bars[k][1])
+        self.assertGreater(bars[i][4], bars[i][1])  # premise: bar i is bullish
+        self.assertEqual(S.engulfing(bars, i, ENG),
+                         {"family": "engulfing", "side": "haussier", "i": i,
+                          "stop_raw": 1.1000, "target_raw": None, "detail": ""})
+        self.assertNotEqual(bars[i][3], bars[i - 1][3])  # the stop discriminates i from i - 1
+
+    def test_engulfing_bearish(self):
+        bars = obars(BEAR_ENG)
+        i = 4
+        self.assertNotEqual(bars[i][2], bars[i - 1][2])
+        s = S.engulfing(bars, i, ENG)
+        self.assertEqual(s, {"family": "engulfing", "side": "baissier", "i": i,
+                             "stop_raw": 1.1020, "target_raw": None, "detail": ""})
+
+    def test_engulfing_needs_three_prior_opposite_bars(self):
+        # only two bearish bars before the engulfing bar: i < k
+        two = obars(BULL_ENG[2:5])
+        self.assertIsNone(S.engulfing(two, 2, ENG))
+        # four bars, but the oldest of the three required prior bars (bar 0) is bullish
+        mixed = obars([BULL_ENG[0], BULL_ENG[2], BULL_ENG[3], BULL_ENG[4]])
+        self.assertGreater(mixed[0][4], mixed[0][1])  # premise: bar 0 is bullish
+        self.assertIsNone(S.engulfing(mixed, 3, ENG))
+        # control: with a third bearish bar the very same engulfing bar signals
+        three = obars(BULL_ENG[1:5])
+        self.assertEqual(S.engulfing(three, 3, ENG)["side"], "haussier")
+        # the threshold comes from params: two prior bars suffice when it is 2
+        self.assertEqual(S.engulfing(two, 2, dict(ENG, engulfing_min_prior=2))["side"], "haussier")
+
+    def test_engulfing_doji_breaks_the_run(self):
+        rows = list(BULL_ENG)
+        rows[2] = (1.1025, 1.1027, 1.1012, 1.1025)  # doji: close == open
+        bars = obars(rows)
+        self.assertEqual(bars[2][4], bars[2][1])  # premise
+        self.assertIsNone(S.engulfing(bars, 4, ENG))
+        rows = list(BULL_ENG)
+        rows[4] = (1.1025, 1.1030, 1.1000, 1.1025)  # the last bar is a doji: neither side
+        self.assertIsNone(S.engulfing(obars(rows), 4, ENG))
+
+    def test_engulfing_body_must_contain_previous_body(self):
+        base = obars(BULL_ENG)
+        self.assertIsNotNone(S.engulfing(base, 4, ENG))  # premise: the pattern signals
+        prev = base[3]
+        self.assertEqual((min(prev[1], prev[4]), max(prev[1], prev[4])), (1.1010, 1.1020))
+
+        def with_last(o, c):
+            rows = list(BULL_ENG)
+            rows[4] = (o, 1.1030, 1.1000, c)
+            return obars(rows)
+
+        self.assertIsNone(S.engulfing(with_last(1.1012, 1.1025), 4, ENG))  # body starts above
+        self.assertIsNone(S.engulfing(with_last(1.1008, 1.1018), 4, ENG))  # body ends below
+        self.assertEqual(S.engulfing(with_last(1.1010, 1.1020), 4, ENG)["side"],
+                         "haussier")  # equal edges still contain
+        # mirror on the bearish side
+        prev = obars(BEAR_ENG)[3]
+        self.assertEqual((min(prev[1], prev[4]), max(prev[1], prev[4])), (1.1003, 1.1012))
+        brows = list(BEAR_ENG)
+        brows[4] = (1.1015, 1.1020, 1.0990, 1.1003)  # equal lower edge still contains
+        self.assertEqual(S.engulfing(obars(brows), 4, ENG)["side"], "baissier")
+        brows[4] = (1.1015, 1.1020, 1.0990, 1.1005)  # body ends above the previous low edge
+        self.assertIsNone(S.engulfing(obars(brows), 4, ENG))
+        brows[4] = (1.1010, 1.1020, 1.0990, 1.1000)  # body starts below the previous top
+        self.assertIsNone(S.engulfing(obars(brows), 4, ENG))
+
+    def test_engulfing_same_colour_gives_none(self):
+        rows = list(BULL_ENG)
+        rows[4] = (1.1025, 1.1030, 1.1000, 1.1008)  # bearish last bar after a bearish run
+        self.assertIsNone(S.engulfing(obars(rows), 4, ENG))
+
+    def test_engulfing_out_of_range_index(self):
+        bars = obars(BULL_ENG)
+        for i in (-1, 5, 99):
+            self.assertIsNone(S.engulfing(bars, i, ENG))
+        self.assertIsNone(S.engulfing([], 0, ENG))
+
+
+def hlbars(rows):
+    """Bars from (high, low[, close]) rows; open and (default) close at the mid."""
+    out = []
+    for r in rows:
+        h, l = r[0], r[1]
+        mid = (h + l) / 2
+        out.append((mid, h, l, r[2] if len(r) > 2 else mid))
+    return obars(out)
+
+
+def fractals(bars, i):
+    """Independent re-statement of the confirmed Williams fractals at bar i (k <= i - 3,
+    at most 50 bars back): (indices of fractal highs, indices of fractal lows)."""
+    hs, ls = [], []
+    for k in range(max(2, i - 50), i - 2):
+        near = (k - 2, k - 1, k + 1, k + 2)
+        if all(bars[k][2] > bars[j][2] for j in near):
+            hs.append(k)
+        if all(bars[k][3] < bars[j][3] for j in near):
+            ls.append(k)
+    return hs, ls
+
+
+def mirror(bars, k=2.2):
+    return [(b[0], k - b[1], k - b[3], k - b[2], k - b[4]) for b in bars]
+
+
+# fractal high at 6 (1.1050), fractal low at 2 (1.0950), bar 9 closes above 1.1050
+UP_H = [1.1010, 1.1010, 1.1010, 1.1020, 1.1030, 1.1040, 1.1050, 1.1030, 1.1020, 1.1060]
+UP_L = [1.0990, 1.0980, 1.0950, 1.0985, 1.0990, 1.1000, 1.1010, 1.1000, 1.0995, 1.1020]
+
+
+def up_bars():
+    rows = list(zip(UP_H, UP_L))
+    rows[9] = (1.1060, 1.1020, 1.1055)
+    return hlbars(rows)
+
+
+# older fractal high at 2 (1.1080), newer one at 5 (1.1060) broken by the close of bar 8;
+# bar 9 then closes above the older level, which a fallback would wrongly accept
+BRK_H = [1.1060, 1.1070, 1.1080, 1.1010, 1.1000, 1.1060, 1.1020, 1.1010, 1.1070, 1.1090]
+BRK_L = [1.1000, 1.0990, 1.0970, 1.0990, 1.0995, 1.1000, 1.1000, 1.1005, 1.1010, 1.1060]
+
+
+def brk_bars():
+    rows = list(zip(BRK_H, BRK_L))
+    rows[8] = (1.1070, 1.1010, 1.1065)
+    rows[9] = (1.1090, 1.1060, 1.1085)
+    return hlbars(rows)
+
+
+def gap_bars():
+    """Fractal high at 7 (1.0900); the only fractal low (index 2, 1.1050) lies ABOVE the
+    close 1.0950 of bar 14, so the stop must come from the ATR."""
+    rows = [(1.1210, 1.1110), (1.1200, 1.1100), (1.1190, 1.1050), (1.1100, 1.1060),
+            (1.1090, 1.1070), (1.0885, 1.0870), (1.0880, 1.0860), (1.0900, 1.0850)]
+    rows += [(1.0870 - 0.0005 * n, 1.0840 - 0.0005 * n) for n in range(6)]  # bars 8..13
+    rows.append((1.0960, 1.0800, 1.0950))  # bar 14
+    return hlbars(rows)
+
+
+def rising_bars():
+    """Rising lows (no fractal low), one spiking high at 10 (1.0980); bar 14 closes above."""
+    rows = []
+    for n in range(15):
+        low = 1.0900 + 0.0002 * n
+        rows.append((low + (0.006 if n == 10 else 0.002), low))
+    rows[14] = (1.0990, 1.0900 + 0.0002 * 14, 1.0985)
+    return hlbars(rows)
+
+
+FRA = {"stop_atr_mult": 1.5}
+
+
+class FractalBreakTests(unittest.TestCase):
+    def test_fractal_break_up(self):
+        bars = up_bars()
+        self.assertEqual(fractals(bars, 9), ([6], [2]))  # premise
+        self.assertEqual((bars[6][2], bars[2][3]), (1.1050, 1.0950))
+        self.assertGreater(bars[9][4], 1.1050)
+        s = S.fractal_break(bars, 9, FRA)
+        self.assertEqual(s, {"family": "fractal_break", "side": "haussier", "i": 9,
+                             "stop_raw": 1.0950, "target_raw": None, "detail": ""})
+        for i in range(0, 9):  # nothing before the breaking bar
+            self.assertIsNone(S.fractal_break(bars, i, FRA), i)
+
+    def test_fractal_unconfirmed_is_ignored(self):
+        rows = [(1.1000, 1.0990), (1.1010, 1.0980), (1.1020, 1.0950), (1.1030, 1.0985),
+                (1.1040, 1.0990), (1.1020, 1.0990), (1.1060, 1.1000, 1.1055)]
+        bars = hlbars(rows)
+        hs, ls = fractals(bars, 6)
+        self.assertEqual((hs, ls), ([], [2]))  # premise: a stop exists, no confirmed high
+        # the peak at 4 beats 2, 3 and 5 but bar 6 (= 4 + 2) is higher: not a fractal yet
+        self.assertTrue(all(bars[4][2] > bars[j][2] for j in (2, 3, 5)))
+        self.assertGreater(bars[6][2], bars[4][2])
+        self.assertGreater(bars[6][4], bars[4][2])  # the close is above that recent peak
+        self.assertIsNone(S.fractal_break(bars, 6, FRA))
+
+    def test_fractal_already_broken_gives_none(self):
+        bars = brk_bars()
+        self.assertEqual(fractals(bars, 9), ([2, 5], [2]))  # premise
+        level = bars[5][2]
+        self.assertEqual(level, 1.1060)
+        # bar 8 is the first close above the latest fractal high: it signals
+        self.assertGreater(bars[8][4], level)
+        s8 = S.fractal_break(bars[:9], 8, FRA)
+        self.assertEqual((s8["side"], s8["stop_raw"]), ("haussier", 1.0970))
+        # bar 9 closes above it again: already broken, no signal ...
+        self.assertGreater(bars[9][4], level)
+        self.assertIsNone(S.fractal_break(bars, 9, FRA))
+        # ... and no fallback on the older, never broken, fractal high of bar 2
+        older = bars[2][2]
+        self.assertGreater(bars[9][4], older)
+        self.assertFalse(any(b[4] > older for b in bars[5:9]))
+
+    def test_fractal_without_opposite_fractal_uses_atr_stop(self):
+        bars = rising_bars()
+        i = 14
+        self.assertEqual(fractals(bars, i), ([10], []))  # premise: no fractal low
+        self.assertGreater(bars[i][4], bars[10][2])
+        atr = S.atr_bars(bars, i)
+        self.assertGreater(atr, 0)
+        s = S.fractal_break(bars, i, FRA)
+        self.assertEqual((s["family"], s["side"], s["i"]), ("fractal_break", "haussier", i))
+        self.assertAlmostEqual(s["stop_raw"], bars[i][4] - 1.5 * atr, places=12)
+        self.assertIsNone(s["target_raw"])
+        self.assertEqual(s["detail"], "")
+        # no usable ATR: no signal
+        orig = S.atr_bars
+        try:
+            S.atr_bars = lambda b, k, n=14: None
+            self.assertIsNone(S.fractal_break(bars, i, FRA))
+            S.atr_bars = lambda b, k, n=14: 0.0
+            self.assertIsNone(S.fractal_break(bars, i, FRA))
+        finally:
+            S.atr_bars = orig
+
+    def test_fractal_opposite_low_above_close_uses_atr_stop(self):
+        bars = gap_bars()
+        i = 14
+        self.assertEqual(fractals(bars, i), ([7], [2]))  # premise
+        self.assertGreater(bars[i][4], bars[7][2])
+        self.assertGreater(bars[2][3], bars[i][4])  # the fractal low is above the close
+        atr = S.atr_bars(bars, i)
+        self.assertGreater(atr, 0)
+        s = S.fractal_break(bars, i, FRA)
+        self.assertEqual(s["side"], "haussier")
+        self.assertAlmostEqual(s["stop_raw"], bars[i][4] - 1.5 * atr, places=12)
+
+    def test_fractal_lookback_is_fifty_bars(self):
+        rows = [(1.1000, 1.0990)] * 54
+        rows[4] = (1.1100, 1.0990)   # fractal high at 4
+        rows[14] = (1.1000, 1.0900)  # fractal low at 14
+        brk = (1.1110, 1.1000, 1.1105)
+        at_50 = hlbars(rows + [brk])           # i = 54: k = 4 = i - 50, still searched
+        self.assertEqual(fractals(at_50, 54), ([4], [14]))
+        s = S.fractal_break(at_50, 54, FRA)
+        self.assertEqual((s["side"], s["stop_raw"]), ("haussier", 1.0900))
+        at_51 = hlbars(rows + [(1.1000, 1.0990), brk])  # i = 55: k = 4 < i - 50
+        self.assertEqual(fractals(at_51, 55)[0], [])
+        self.assertIsNone(S.fractal_break(at_51, 55, FRA))
+
+    def test_fractal_mirror_down(self):
+        up = mirror(up_bars())
+        self.assertEqual(fractals(up, 9), ([2], [6]))  # premise: roles swapped
+        s = S.fractal_break(up, 9, FRA)
+        self.assertEqual((s["family"], s["side"], s["i"], s["target_raw"], s["detail"]),
+                         ("fractal_break", "baissier", 9, None, ""))
+        self.assertAlmostEqual(s["stop_raw"], 2.2 - 1.0950, places=12)
+        for i in range(0, 9):
+            self.assertIsNone(S.fractal_break(up, i, FRA), i)
+        # already broken, mirrored
+        b = mirror(brk_bars())
+        self.assertEqual(fractals(b, 9), ([2], [2, 5]))
+        self.assertEqual(S.fractal_break(b[:9], 8, FRA)["side"], "baissier")
+        self.assertIsNone(S.fractal_break(b, 9, FRA))
+        # ATR stop, mirrored: close + 1.5 x ATR
+        g = mirror(gap_bars())
+        self.assertEqual(fractals(g, 14), ([2], [7]))
+        sg = S.fractal_break(g, 14, FRA)
+        self.assertEqual(sg["side"], "baissier")
+        self.assertAlmostEqual(sg["stop_raw"], g[14][4] + 1.5 * S.atr_bars(g, 14), places=12)
+
+    def test_fractal_both_directions_gives_none(self):
+        # defensive: the geometry makes it unreachable, so force both sides to fire
+        bars = up_bars()
+        orig = S._fractal_side
+        try:
+            S._fractal_side = lambda b, i, p, side: S._signal("fractal_break", side, i, 1.0, None)
+            self.assertIsNone(S.fractal_break(bars, 9, FRA))
+            S._fractal_side = (lambda b, i, p, side:
+                               S._signal("fractal_break", side, i, 1.0, None)
+                               if side == "haussier" else None)
+            self.assertEqual(S.fractal_break(bars, 9, FRA)["side"], "haussier")
+        finally:
+            S._fractal_side = orig
+
+    def test_fractal_out_of_range_index(self):
+        bars = up_bars()
+        for i in (-1, 10, 99):
+            self.assertIsNone(S.fractal_break(bars, i, FRA))
+        self.assertIsNone(S.fractal_break([], 0, FRA))
+
+
+class ShortAndFlatSeriesTests(unittest.TestCase):
+    def test_short_series_give_none_for_both(self):
+        # premise: the full fixtures do signal
+        eng, up = obars(BULL_ENG), up_bars()
+        self.assertIsNotNone(S.engulfing(eng, 4, ENG))
+        self.assertIsNotNone(S.fractal_break(up, 9, FRA))
+        # every truncation stops before the signalling bar, whatever index is asked
+        for bars in (eng, obars(BEAR_ENG), up, gap_bars(), rising_bars()):
+            for n in range(0, len(bars)):
+                for i in range(-2, n + 3):
+                    self.assertIsNone(S.engulfing(bars[:n], i, ENG), (n, i))
+                    self.assertIsNone(S.fractal_break(bars[:n], i, FRA), (n, i))
+        self.assertIsNone(S.engulfing([], 0, ENG))
+        self.assertIsNone(S.fractal_break([], 0, FRA))
+        self.assertIsNone(S.fractal_break(obars(BULL_ENG), 4, FRA))  # 5 bars, no fractal
+
+    def test_flat_series_give_no_signal(self):
+        f = flat(60)
+        for i in range(0, 60):
+            self.assertIsNone(S.engulfing(f, i, ENG), i)
+            self.assertIsNone(S.fractal_break(f, i, FRA), i)
+
+
+class DetectAllTests(unittest.TestCase):
+    def test_real_families_in_priority_order(self):
+        rows = [(1.1000, 1.1010, 1.0990, 1.1005),   # 08:00 range bar
+                (1.1010, 1.1012, 1.0995, 1.1000),   # 08:15 range bar, bearish
+                (1.1008, 1.1009, 1.1003, 1.1004),   # 08:30 bearish, inside
+                (1.1006, 1.1007, 1.1001, 1.1002),   # 08:45 bearish, inside
+                (1.1001, 1.1022, 1.1000, 1.1020)]   # 09:00 bullish engulfing, breaks 1.1012
+        bars = obars(rows)
+        params = dict(SIG_PARAMS, **ENG, range_minutes=30, break_window_hours=3,
+                      families=list(S.FAMILIES))
+        ranges = S.session_ranges(bars, utc(2026, 11, 16, 16), params)
+        sb = S.session_break(bars, 4, ranges, params)
+        en = S.engulfing(bars, 4, params)
+        self.assertIsNotNone(sb)  # premise
+        self.assertIsNotNone(en)
+        got = S.detect_all(bars, 4, ranges, params)
+        self.assertEqual(got, [sb, en])
+        self.assertEqual([s["family"] for s in got], ["session_break", "engulfing"])
+        # params["families"] filters, and its own order does not matter
+        only = dict(params, families=["engulfing"])
+        self.assertEqual(S.detect_all(bars, 4, ranges, only), [en])
+        swapped = dict(params, families=["engulfing", "session_break"])
+        self.assertEqual(S.detect_all(bars, 4, ranges, swapped), [sb, en])
+        none = dict(params, families=["rsi_exit", "bb_return"])
+        self.assertEqual(S.detect_all(bars, 4, ranges, none), [])
+        self.assertEqual(S.detect_all(bars, 4, ranges, dict(params, families=[])), [])
+        self.assertEqual(S.detect_all(bars, 3, ranges, params), [])  # nothing fires at bar 3
+
+    def test_detect_all_orders_by_family_priority_and_honours_params_families(self):
+        calls = []
+        names = ("session_break", "bb_return", "fractal_break", "engulfing", "rsi_exit")
+        saved = {n: getattr(S, n) for n in names}
+
+        def fake(name, result=True):
+            def f(*args):
+                calls.append((name, args))
+                return {"family": name, "side": "haussier", "i": args[1]} if result else None
+            return f
+
+        try:
+            for n in names:
+                setattr(S, n, fake(n, result=(n != "bb_return")))
+            bars, ranges = ["bars"], ["ranges"]
+            params = {"families": list(reversed(names))}  # deliberately reversed
+            got = S.detect_all(bars, 7, ranges, params)
+            self.assertEqual([s["family"] for s in got],
+                             ["session_break", "fractal_break", "engulfing", "rsi_exit"])
+            self.assertEqual([c[0] for c in calls], list(names))  # called in FAMILIES order
+            args = dict(calls)
+            self.assertEqual(args["session_break"], (bars, 7, ranges, params))
+            for n in ("bb_return", "fractal_break", "engulfing", "rsi_exit"):
+                self.assertEqual(args[n], (bars, 7, params), n)
+            calls.clear()
+            got = S.detect_all(bars, 7, ranges, {"families": ["rsi_exit", "fractal_break"]})
+            self.assertEqual([s["family"] for s in got], ["fractal_break", "rsi_exit"])
+            self.assertEqual([c[0] for c in calls], ["fractal_break", "rsi_exit"])
+        finally:
+            for n, f in saved.items():
+                setattr(S, n, f)
+
+
 if __name__ == "__main__":
     unittest.main()

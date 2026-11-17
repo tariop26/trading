@@ -15,6 +15,12 @@ BAR_S = 900
 FAMILIES = config.INTRADAY_FAMILIES
 
 
+def _signal(family, side, i, stop_raw, target_raw, detail=""):
+    """The standard signal dict shared by every family."""
+    return {"family": family, "side": side, "i": i,
+            "stop_raw": stop_raw, "target_raw": target_raw, "detail": detail}
+
+
 def closed_bars(bars, now_utc):
     """Bars whose 15 minutes are over at `now_utc` (ts + BAR_S <= now), sorted by ts.
 
@@ -129,8 +135,7 @@ def session_break(bars, i, ranges, params):
         if already:
             continue
         if best is None or end > best[0]:
-            best = (end, {"family": "session_break", "side": side, "i": i,
-                          "stop_raw": stop, "target_raw": None, "detail": r["name"]})
+            best = (end, _signal("session_break", side, i, stop, None, r["name"]))
     return best[1] if best else None
 
 
@@ -152,11 +157,9 @@ def bb_return(bars, i, params):
     prev_close, close = bars[i - 1][4], bars[i][4]
     mid = bands[0]
     if prev_close > prev_bands[1] and close <= bands[1]:
-        return {"family": "bb_return", "side": "baissier", "i": i,
-                "stop_raw": bars[i - 1][2], "target_raw": mid, "detail": ""}
+        return _signal("bb_return", "baissier", i, bars[i - 1][2], mid)
     if prev_close < prev_bands[2] and close >= bands[2]:
-        return {"family": "bb_return", "side": "haussier", "i": i,
-                "stop_raw": bars[i - 1][3], "target_raw": mid, "detail": ""}
+        return _signal("bb_return", "haussier", i, bars[i - 1][3], mid)
     return None
 
 
@@ -184,6 +187,118 @@ def rsi_exit(bars, i, params):
     atr = atr_bars(bars, i)
     if atr is None or atr <= 0:
         return None
-    return {"family": "rsi_exit", "side": side, "i": i,
-            "stop_raw": closes[-1] + sign * params["stop_atr_mult"] * atr,
-            "target_raw": None, "detail": ""}
+    return _signal("rsi_exit", side, i, closes[-1] + sign * params["stop_atr_mult"] * atr, None)
+
+
+def engulfing(bars, i, params):
+    """Engulfing candle after a run of opposite candles.
+
+    haussier: bar i closes above its open, the `engulfing_min_prior` bars i-k..i-1 all close
+    strictly below their open (a doji breaks the run) and the body of bar i contains the
+    body of bar i - 1 (edges may be equal). Stop = low of bar i; no target. baissier is the
+    mirror (stop = high of bar i). None when fewer than k bars precede i.
+    """
+    k = max(1, int(params["engulfing_min_prior"]))
+    if not k <= i < len(bars):
+        return None
+    _, o, h, l, c = bars[i]
+    prev_o, prev_c = bars[i - 1][1], bars[i - 1][4]
+    contains = min(o, c) <= min(prev_o, prev_c) and max(o, c) >= max(prev_o, prev_c)
+    if not contains:
+        return None
+    run = bars[i - k:i]
+    if c > o and all(b[4] < b[1] for b in run):
+        return _signal("engulfing", "haussier", i, l, None)
+    if c < o and all(b[4] > b[1] for b in run):
+        return _signal("engulfing", "baissier", i, h, None)
+    return None
+
+
+FRACTAL_LOOKBACK = 50
+
+
+def _fractals(bars, i):
+    """Williams fractals confirmed at bar i: (indices of highs, indices of lows), oldest first.
+
+    A fractal at k beats the two bars on each side (strictly); it is confirmed once its
+    right-hand bars are closed relative to i (k + 2 <= i - 1) and searched back to
+    i - FRACTAL_LOOKBACK. Only bars up to i - 1 are read.
+    """
+    highs, lows = [], []
+    for k in range(max(2, i - FRACTAL_LOOKBACK), i - 2):
+        near = (k - 2, k - 1, k + 1, k + 2)
+        if all(bars[k][2] > bars[j][2] for j in near):
+            highs.append(k)
+        if all(bars[k][3] < bars[j][3] for j in near):
+            lows.append(k)
+    return highs, lows
+
+
+def _fractal_side(bars, i, params, side):
+    """One direction of fractal_break (see there); None when it does not trigger."""
+    highs, lows = _fractals(bars, i)
+    bull = side == "haussier"
+    own, opposite = (highs, lows) if bull else (lows, highs)
+    if not own:
+        return None
+    k = own[-1]  # the latest confirmed fractal only: no fallback on an older one
+    close = bars[i][4]
+    if bull:
+        level = bars[k][2]
+        if not close > level or any(bars[j][4] > level for j in range(k + 3, i)):
+            return None
+    else:
+        level = bars[k][3]
+        if not close < level or any(bars[j][4] < level for j in range(k + 3, i)):
+            return None
+    stop = None
+    if opposite:
+        m = opposite[-1]
+        if bull and bars[m][3] < close:
+            stop = bars[m][3]
+        elif not bull and bars[m][2] > close:
+            stop = bars[m][2]
+    if stop is None:
+        atr = atr_bars(bars, i)
+        if atr is None or atr <= 0:
+            return None
+        stop = close - params["stop_atr_mult"] * atr if bull else close + params["stop_atr_mult"] * atr
+    return _signal("fractal_break", side, i, stop, None)
+
+
+def fractal_break(bars, i, params):
+    """Close beyond the latest confirmed Williams fractal that no close had broken yet.
+
+    haussier: close of bar i above the high of the latest confirmed fractal high and no close
+    from k + 3 to i - 1 above it. Stop = low of the latest confirmed fractal low when it is
+    under the close, else close - stop_atr_mult x ATR (None without a usable ATR). baissier is
+    the mirror. Both directions on the same bar give None. No target.
+    """
+    if not 0 <= i < len(bars):
+        return None
+    up = _fractal_side(bars, i, params, "haussier")
+    down = _fractal_side(bars, i, params, "baissier")
+    if up is not None and down is not None:
+        return None
+    return up or down
+
+
+def detect_all(bars, i, ranges, params):
+    """Signals of bar i for every family of params["families"], in FAMILIES order."""
+    out = []
+    for family in FAMILIES:
+        if family not in params["families"]:
+            continue
+        if family == "session_break":
+            sig = session_break(bars, i, ranges, params)
+        elif family == "bb_return":
+            sig = bb_return(bars, i, params)
+        elif family == "fractal_break":
+            sig = fractal_break(bars, i, params)
+        elif family == "engulfing":
+            sig = engulfing(bars, i, params)
+        else:
+            sig = rsi_exit(bars, i, params)
+        if sig is not None:
+            out.append(sig)
+    return out
