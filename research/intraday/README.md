@@ -32,6 +32,8 @@ Ils servent à refaire ou contrôler les chiffres de la note.
 | Bollinger 5 min (160 ; 2,8), retournement | `bb_user.py` + `bbu_report.py`, `bb_sl.py` (stops courts), `bb_grid.py` (robustesse), `bb_reint.py` + `bbr_report.py` (entrée à la réintégration) |
 | Cassure de bande / de fenêtre (études d'événements) | `bb_event.py` + `bbe_report.py`, `brk_event.py` + `brk_report.py` |
 | Gestion sur cassures de 4 h | `mgmt_test.py` (les tableaux de résultats ont été produits par un script de résumé lancé à la volée, non conservé : voir la note) |
+| Retour à la moyenne D1 et force relative des devises | `mr_d1.py` (télécharge Yahoo, cache JSON) |
+| Effets de calendrier (jour, tournant de mois, emploi US) | `calendar_test.py dossier SYMBOLE` |
 | Analyse des relevés MQL5 | `analyse_positions.py` (relevé 2381033), `an2.py` à `an7.py` (relevé 2265877) |
 
 ## Conventions communes

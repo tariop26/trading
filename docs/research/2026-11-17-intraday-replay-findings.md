@@ -15,6 +15,9 @@ rentable après coûts n'a été trouvée.** Les seuls signes durables sont peti
 | Tendance H1/H4/D1 sur 3 paires USD | rien de distinguable de zéro |
 | Tendance D1 diversifiée (18 marchés) | Sharpe d'environ 0,35 à 0,4, stable mais petit |
 | Signal MQL5 2265877 (entrée, gestion, filtre horaire) | non reproduit |
+| Retour à la moyenne 1-5 jours (RSI(2), 25 marchés D1) | Sharpe 0,31 ±0,43 (0,10 si entrée le lendemain) ; disparaît si les coûts triplent |
+| Force relative des devises (7 devises, 18 combinaisons) | suivre la force perd ; l'inverse gagne ~5 pb brut, soit le niveau des coûts |
+| Effets de calendrier (jour de semaine, tournant de mois, emploi US) | aucun test au seuil fixé (|t| ≥ 3,3) |
 
 Conséquences dans le dépôt : `intraday.enabled` vaut `false` par défaut ; `SKILL.md` ne dit plus « non testés » mais
 « testés, sans avantage » ; les scripts sont dans `research/intraday/`.
@@ -147,6 +150,30 @@ facteur de profit 2,0, tous les semestres positifs, achats +2 476 $ et ventes +2
   - filtre 13-15 h UTC : moins négatif (coûts plus faibles en R à l'ouverture US) mais jamais positif de façon
     significative (or, gestion B : +0,03 à +0,07 R, t ≈ 0,8).
 - **Biais de sélection probable** : un signal MQL5 est affiché parce qu'il a bien marché.
+
+### 3.10 Pistes à une dizaine de trades par semaine (`mr_d1.py`, `calendar_test.py`)
+
+Demande : environ 10 trades par semaine, sans scalp. Règles fixées avant les résultats, miroir comme témoin.
+
+**Retour à la moyenne 1-5 jours** (25 marchés Yahoo, 2007-2026, coût 2 pb par côté, 1 pb en devises). Règle A : RSI(2) < 10 (achat) ou > 90 (vente) avec filtre SMA 200, sortie sur SMA 5 ou après 5 jours. Règle B : rendement sur 3 jours à plus de 1,5 écart-type, tenue 3 jours, sans filtre.
+
+| Règle | Sharpe 2016-22 | Sharpe 2023-26 | Sharpe tout | Trades/sem | Net/trade |
+|---|---|---|---|---|---|
+| A, entrée à la clôture du signal | −0,05 | 0,38 ±0,96 | 0,31 ±0,43 | 4,6 | +12 pb |
+| A, entrée à la clôture suivante | −0,05 | −0,24 | 0,10 ±0,42 | 4,6 | +8 pb |
+| A, long seulement | −0,15 | 0,73 ±1,04 | 0,33 ±0,43 | 2,7 | +13 pb |
+| A, coûts × 3 | −0,39 | −0,02 | −0,03 ±0,42 | 4,6 | +5 pb |
+| B | −0,47 | −0,25 | −0,13 ±0,42 | 7,2 | +3 pb |
+
+Le miroir de A est négatif (−0,65) : le sens compte, mais l'effet est petit, pas significatif, et il s'évapore avec les coûts ou un jour de retard.
+
+**Force relative des devises** (7 devises contre USD, 5 148 jours, 1 pb par côté et par jambe). Long la plus forte, court la plus faible sur L jours (1, 5, 20), tenue H jours (1, 3, 5), un trade par jour. Le sens « suivre la force » perd partout (Sharpe −1,4 pour L=1, H=1). Le sens inverse gagne +5,1 pb brut à L=1, H=1 mais +1,1 pb net (Sharpe 0,17 ±0,44).
+
+**Effets de calendrier** (EURUSD, GBPUSD, USDJPY, XAUUSD, DAX, NAS100, US30, 1 min, brut hors financement). Seuil fixé : |t| ≥ 3,3 et même signe en exploration et en confirmation.
+- Jour de la semaine : meilleur résultat, mercredi long sur les indices (+20 pb brut, t ≈ 2,4 ; DAX, NAS100 et US30 sont corrélés). Or le mardi, t = 2,3. Aucun au seuil.
+- Tournant de mois : indices +40 à +70 pb brut, t ≈ 1,2 à 1,6 ; excès faible sur une fenêtre de 4 jours. Pas significatif.
+- Emploi US (premier vendredi, 08:30 New York) : suivre le mouvement perd (−5 à −9 pb net), contrer gagne +5 pb (t ≈ 1 à 1,6). Les spreads de l'annonce sont probablement sous-estimés.
+- Limite : certaines clôtures de vendredi manquent dans les fichiers (n ≈ 190 au lieu de 560 sur les paires).
 
 ## 4. Erreurs rencontrées et corrigées pendant l'étude
 
