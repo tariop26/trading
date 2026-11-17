@@ -8,15 +8,23 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest import mock
 
 import alert_checks
+import alert_state
 import alerts_run
+import intraday_run
+from intraday_helpers import make_bars, utc
 
 NOW = datetime(2026, 11, 16, 13, 0, tzinfo=timezone.utc)
 TODAY = "2026-11-16"
 SINCE = "2026-11-16T10:00:00+00:00"
 SECRET_CONFIG = '{"account": {"currency": "USD", "capital": 250000}}'
 FORBIDDEN = re.compile(r"(?i)\b(achat|acheter|vente|vendre|buy|sell)\b")
+FORBIDDEN_SIGNAL = re.compile(r"(?i)\b(achat|acheter|vente|vendre|buy|sell|prévision|gagnant|profit)\b"
+                              r"|à prendre")
+SIGNAL_NOW = utc(2026, 11, 16, 8, 52)              # the 08:30 bar closed at 08:45
+SIGNAL_BAR = "2026-11-16T08:30:00+00:00"
 
 
 def ts(h, m=0):
@@ -65,6 +73,7 @@ class Harness(unittest.TestCase):
         self.gh_output = os.path.join(self.dir, "gh_output.txt")
         self.sent, self.calls = [], []
         self.bars = {"EURUSD=X": [bar(10, 5, 1.099, 1.101)]}
+        self.bars15 = {}                            # served when interval == "15m"
         self.bars_fail = False
         self.events = []
         self.briefing = briefing_doc(idea())
@@ -81,8 +90,9 @@ class Harness(unittest.TestCase):
             self.calls.append(("bars", tuple(symbols), interval, rng))
             if self.bars_fail:
                 return {}, [{"symbol": s, "reason": "HTTP 500"} for s in symbols]
-            return ({s: SimpleNamespace(bars=self.bars[s]) for s in symbols if s in self.bars},
-                    [{"symbol": s, "reason": "x"} for s in symbols if s not in self.bars])
+            source = self.bars15 if interval == "15m" else self.bars
+            return ({s: SimpleNamespace(bars=source[s]) for s in symbols if s in source},
+                    [{"symbol": s, "reason": "x"} for s in symbols if s not in source])
 
         def fetch_calendar():
             self.calls.append(("calendar",))
@@ -118,6 +128,25 @@ class Harness(unittest.TestCase):
 
     def prefixes(self):
         return [t.split(" :")[0].split(" dans")[0] for t in self.sent]
+
+    def london_break_setup(self, with_idea=False):
+        """A real Londres session break on EURUSD=X: the 08:00 and 08:15 bars form the range, the
+        08:30 bar closes at 1.1020, above it. Use with now=SIGNAL_NOW (08:52 UTC)."""
+        flat = (1.1000, 1.1004, 1.0996, 1.1000)
+        self.bars15 = {"EURUSD=X": make_bars(utc(2026, 11, 16, 7, 0), [
+            flat, flat, flat, flat,                                    # 07:00 .. 07:45
+            (1.1000, 1.1010, 1.0990, 1.1005),                          # 08:00
+            (1.1005, 1.1012, 1.0995, 1.1000),                          # 08:15
+            (1.1005, 1.1025, 1.1000, 1.1020)])}                        # 08:30, closes at 08:45
+        self.briefing = briefing_doc(idea()) if with_idea else briefing_doc()
+        self.briefing["daily_context"] = {"EURUSD=X": {"name": "EUR/USD", "last": 1.102,
+                                                      "atr_pct": 0.6, "trend": "up"}}
+
+    def signal_texts(self):
+        return [t for t in self.sent if t.startswith("Signal en séance")]
+
+    def bars15_calls(self):
+        return [c for c in self.calls if c[0] == "bars" and c[2] == "15m"]
 
 
 class TestFullRun(Harness):
@@ -375,6 +404,165 @@ class TestNow(Harness):
     def test_a_bad_now_is_one_line_exit_1(self):
         self.assertEqual(self.run_main("--now", "yesterday"), 1)
         self.assertEqual(len(self.output.strip().splitlines()), 1)
+
+
+class TestSignals(Harness):
+    def run_signal(self, *extra, now=SIGNAL_NOW):
+        return self.run_main(*extra, now=now)
+
+    def test_signal_alert_is_sent_after_ideas_and_marked(self):
+        self.london_break_setup(with_idea=True)
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(self.sent), 2, self.sent)
+        self.assertTrue(self.sent[0].startswith("Idée de trade"), self.sent[0])
+        self.assertTrue(self.sent[1].startswith("Signal en séance"), self.sent[1])
+        for text in self.sent:
+            self.assertIsNone(FORBIDDEN_SIGNAL.search(text), text)
+        st = self.saved_state()
+        self.assertEqual(st["signals_count"], 1)
+        self.assertEqual(len(st["signals_sent"]), 1)
+        self.assertTrue(alert_state.signal_sent_for_bar(st, "EURUSD=X", "haussier", SIGNAL_BAR))
+        self.assertTrue(st["signals_sent"][0].startswith("EURUSD=X|haussier|" + SIGNAL_BAR + "|"))
+        self.assertIn(("bars", ("EURUSD=X",), "15m", "5d"), self.calls)
+
+    def test_second_run_sends_no_duplicate_for_the_same_bar(self):
+        self.london_break_setup()
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(self.signal_texts()), 1)                    # premise
+        self.sent.clear()
+        before = self.state_bytes()
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_failed_send_is_not_marked_and_is_resent_next_run_while_fresh_and_not_after_30_minutes(self):
+        self.london_break_setup()
+        self.send_script = [(False, "HTTP 500")]
+        self.assertEqual(self.run_signal(), 1, self.output)
+        self.assertEqual(len(self.signal_texts()), 1)                    # it was attempted
+        self.assertFalse(os.path.exists(self.state))                     # nothing marked
+        self.assertNotIn("SECRET", self.output)
+        # more than 30 minutes after the bar closed (08:45): too old, nothing is sent
+        self.sent.clear()
+        self.assertEqual(self.run_signal(now=utc(2026, 11, 16, 9, 37)), 0, self.output)
+        self.assertEqual(self.sent, [])
+        self.assertFalse(os.path.exists(self.state))
+        # still fresh: it goes again, and is marked this time
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(self.signal_texts()), 1)
+        self.assertEqual(self.saved_state()["signals_count"], 1)
+        self.assertIsNone(FORBIDDEN_SIGNAL.search(self.sent[0]))
+
+    def test_exception_in_signals_does_not_silence_stops_or_ideas(self):
+        self.london_break_setup(with_idea=True)
+        self.write_alerts(rules_doc(rule("stop", 1.095)))
+        self.bars = {"EURUSD=X": [bar(10, 10, 1.094, 1.1)]}
+        with mock.patch.object(intraday_run, "collect",
+                               side_effect=ZeroDivisionError("secret detail 987654")):
+            code = self.run_main(now=NOW)
+        self.assertEqual(code, 0, self.output)
+        self.assertEqual(self.prefixes(),
+                         ["Stop touché", "Idée de trade, en formation, non confirmée à la clôture"])
+        self.assertIn("ZeroDivisionError", self.output)
+        self.assertNotIn("987654", self.output)
+        self.assertNotIn("secret detail", self.output)
+        self.assertEqual(self.saved_state()["signals_count"], 0)
+
+    def test_dry_run_prints_signal_and_writes_no_state(self):
+        self.london_break_setup()
+        self.assertEqual(self.run_signal("--dry-run"), 0, self.output)
+        self.assertEqual(self.sent, [])
+        self.assertFalse(os.path.exists(self.state))
+        self.assertIn("Signal en séance", self.output)
+        self.assertIsNone(FORBIDDEN_SIGNAL.search(self.output.split("\n---\n", 1)[1]))
+        with open(self.gh_output, encoding="utf-8") as f:
+            self.assertIn("state_changed=false", f.read())
+
+    def test_signal_cap_10_per_day_across_runs(self):
+        self.london_break_setup()
+        capped = alert_state.empty_state(TODAY)
+        capped["signals_count"] = 10
+        with open(self.state, "w", encoding="utf-8") as f:
+            json.dump(capped, f)
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(self.signal_texts(), [])
+        self.assertEqual(len(self.sent), 1, self.sent)
+        self.assertIn("Plafond de 10 alertes de signal atteint", self.sent[0])
+        self.assertIsNone(FORBIDDEN_SIGNAL.search(self.sent[0]))
+        self.assertEqual(self.saved_state()["signals_cap_day"], TODAY)
+        self.assertEqual(self.saved_state()["signals_count"], 10)
+        self.sent.clear()
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(self.sent, [])
+
+    def test_secret_config_capital_never_printed_in_logs(self):
+        self.london_break_setup()
+        self.env["TRADER_FX_CONFIG"] = SECRET_CONFIG
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(self.signal_texts()), 1)                    # premise
+        self.assertNotIn("250000", self.output)
+        for text in self.sent:
+            self.assertNotIn("250000", text)
+        self.assertNotIn("250000", json.dumps(self.saved_state()))
+
+    def test_calendar_is_fetched_only_when_a_signal_candidate_exists_and_without_open_rules(self):
+        def calendar():
+            return [c for c in self.calls if c[0] == "calendar"]
+        # a candidate, no open rule: the calendar is read once, and no block means the alert goes
+        self.london_break_setup()
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(calendar()), 1)
+        self.assertEqual(len(self.signal_texts()), 1)
+        # a High USD or EUR event within 30 minutes blocks the alert
+        for currency in ("USD", "EUR"):
+            self.setUp()
+            self.london_break_setup()
+            self.events = [event(9, 10, currency)]
+            self.assertEqual(self.run_signal(), 0, self.output)
+            self.assertEqual(len(calendar()), 1, currency)
+            self.assertEqual(self.signal_texts(), [], currency)
+        # a candidate and an open trade on the other side: the calendar read for the
+        # announcements is reused, never fetched twice
+        self.setUp()
+        self.london_break_setup()
+        self.write_alerts(rules_doc(rule("stop", 1.12, side="baissier")))
+        self.events = [event(9, 10, "EUR")]
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(calendar()), 1)
+        self.assertEqual(self.signal_texts(), [])
+        # no daily context: no 15-minute bars and no calendar
+        self.setUp()
+        self.briefing = briefing_doc()
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(self.bars15_calls(), [])
+        self.assertEqual(calendar(), [])
+        # a daily context but no signal: bars are asked, the calendar is not
+        self.setUp()
+        self.london_break_setup()
+        flat = (1.1, 1.1, 1.1, 1.1)
+        self.bars15 = {"EURUSD=X": make_bars(utc(2026, 11, 16, 7, 0), [flat] * 7)}
+        self.assertEqual(self.run_signal(), 0, self.output)
+        self.assertEqual(len(self.bars15_calls()), 1)
+        self.assertEqual(calendar(), [])
+        self.assertEqual(self.signal_texts(), [])
+
+    def test_missing_or_invalid_alerts_json_still_sends_signals(self):
+        for doc in (None, "{", "[]", rules_doc(rule(), v=2)):
+            self.setUp()
+            self.london_break_setup()
+            if doc is not None:
+                self.write_alerts(doc)
+            self.assertEqual(self.run_signal(), 0, self.output)
+            self.assertEqual(len(self.signal_texts()), 1, doc)
+            self.assertIn("suivi des stops et annonces sautés", self.output)
+
+    def test_existing_tests_still_see_no_15m_call_without_daily_context(self):
+        self.assertNotIn("daily_context", self.briefing)
+        self.assertEqual(self.run_main(), 0, self.output)
+        self.assertEqual(self.bars15_calls(), [])
+        self.assertIn("contexte journalier absent : signaux en séance sautés.", self.output)
+        self.assertEqual(self.signal_texts(), [])
+        self.assertEqual(len(self.sent), 1)                                # the idea only
 
 
 if __name__ == "__main__":

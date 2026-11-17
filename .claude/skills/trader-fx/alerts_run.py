@@ -29,6 +29,7 @@ import config as fxconfig  # noqa: E402
 import data  # noqa: E402
 import economic_calendar  # noqa: E402
 import fx  # noqa: E402
+import intraday_run  # noqa: E402
 import journal  # noqa: E402
 import telegram  # noqa: E402
 
@@ -167,7 +168,7 @@ def main(argv=None, deps=None):
             print(problem)
             return 1
     try:
-        fxconfig.load_config(args.config)
+        cfg = fxconfig.load_config(args.config)
     except fxconfig.ConfigError as e:
         print(str(e))
         return 1
@@ -226,6 +227,26 @@ def main(argv=None, deps=None):
             text = alert_messages.idea_message(idea, account, waiting if n == len(ideas) - 1 else 0)
             queue.append((text, lambda st, key=alert_checks.idea_key(idea, today):
                           st["ideas_sent"].append(key)))
+
+    # 5b. intraday signals (the calendar is read only if a candidate needs it, once)
+    calendar_cache = []
+
+    def get_events():
+        if have_rules:
+            return events
+        if not calendar_cache:
+            calendar_cache.append(fetch_calendar().get("events") or [])
+        return calendar_cache[0]
+
+    try:
+        sig_items, sig_log = intraday_run.collect(now, document, get_events, rules or [], state,
+                                                  cfg, fetch_bars, workers=WORKERS)
+    except Exception as e:  # noqa: BLE001 - a signals bug must not silence stops or ideas: type only
+        _say("signaux en séance en échec (%s) : sautés." % type(e).__name__)
+        sig_items, sig_log = [], []
+    for line in sig_log:
+        _say(line)
+    queue.extend(sig_items)
 
     # 6. sending
     code = 0
