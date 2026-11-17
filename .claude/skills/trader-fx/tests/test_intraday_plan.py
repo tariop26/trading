@@ -2,6 +2,7 @@ import _path  # noqa
 import unittest
 from unittest import mock
 
+import alert_state
 import config as cfgmod
 import intraday_plan as P
 import intraday_signals
@@ -348,6 +349,128 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(cand["exposures"], [("EUR", "+"), ("USD", "-")])
         self.assertNotEqual(cand["size"]["status"], "to_confirm")
         self.assertIsNotNone(cand["size"]["lots"])
+
+
+def cand(symbol, side=LONG, score=3, families=("engulfing",), bar_iso="2026-11-16T09:45:00+00:00"):
+    return {"symbol": symbol, "display_name": symbol, "side": side, "score": score,
+            "why": [], "families": list(families), "primary": families[0], "detail": "",
+            "bar_ts": 0, "bar_iso": bar_iso, "plan": {}, "size": None,
+            "exposures": plan_exposures(symbol, side)}
+
+
+def plan_exposures(symbol, side):
+    return P.plan.exposures(symbol, side)
+
+
+def state_with(*sent, count=None):
+    """A state where `sent` = [(symbol, side, bar_iso, score, sent_at)] were already marked."""
+    st = alert_state.empty_state("2026-11-16")
+    for symbol, side, bar_iso, score, at in sent:
+        alert_state.mark_signal(st, cand(symbol, side, score, bar_iso=bar_iso), at)
+    if count is not None:
+        st["signals_count"] = count
+    return st
+
+
+def syms(chosen):
+    return [c["symbol"] for c in chosen]
+
+
+class SelectTests(unittest.TestCase):
+    def setUp(self):
+        self.config = cfgmod.defaults()
+        self.state = alert_state.empty_state("2026-11-16")
+
+    def select(self, cands, state=None):
+        return P.select(cands, state if state is not None else self.state, self.config, NOW)
+
+    def test_select_orders_by_score_then_families_then_symbol(self):
+        cands = [cand("^B"), cand("^A"), cand("^C", families=("engulfing", "rsi_exit")),
+                 cand("^D", score=4), cand("^E", families=("engulfing", "rsi_exit"))]
+        chosen, cap = self.select(cands)
+        self.assertEqual(syms(chosen), ["^D", "^C", "^E"])       # per-run cap 3
+        self.config["intraday"]["max_per_run"] = 10
+        chosen, cap = self.select(cands)
+        self.assertEqual(syms(chosen), ["^D", "^C", "^E", "^A", "^B"])
+        self.assertFalse(cap)
+
+    def test_select_skips_bar_already_sent(self):
+        bar = "2026-11-16T09:45:00+00:00"
+        st = state_with(("^A", LONG, bar, 3, utc(2026, 11, 16, 9, 50)))
+        self.config["intraday"]["cooldown_minutes"] = 0         # only the bar rule applies
+        self.assertTrue(alert_state.signal_sent_for_bar(st, "^A", LONG, bar))
+        chosen, _ = self.select([cand("^A", bar_iso=bar), cand("^B", bar_iso=bar)], st)
+        self.assertEqual(syms(chosen), ["^B"])
+        # the same symbol on a later bar is not blocked by the bar rule
+        chosen, _ = self.select([cand("^A", bar_iso="2026-11-16T10:00:00+00:00")], st)
+        self.assertEqual(syms(chosen), ["^A"])
+
+    def test_cooldown_blocks_same_score_but_lets_a_higher_score_through_as_reinforced(self):
+        st = state_with(("^A", LONG, "2026-11-16T09:30:00+00:00", 3, utc(2026, 11, 16, 9, 35)))
+        prev = alert_state.last_signal(st, "^A", LONG, NOW, 120)
+        self.assertEqual(prev["score"], 3)                       # premise: at rest
+        chosen, _ = self.select([cand("^A", score=3)], st)
+        self.assertEqual(chosen, [])
+        chosen, _ = self.select([cand("^A", score=2)], st)
+        self.assertEqual(chosen, [])
+        original = cand("^A", score=4)
+        chosen, _ = self.select([original], st)
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(chosen[0]["previous"], prev)
+        self.assertNotIn("previous", original)                   # a copy, not a mutation
+        # the other side is not at rest
+        chosen, _ = self.select([cand("^A", side=SHORT, score=3)], st)
+        self.assertEqual(syms(chosen), ["^A"])
+        self.assertNotIn("previous", chosen[0])
+
+    def test_per_run_cap_3(self):
+        cands = [cand("^%s" % c, score=9 - n) for n, c in enumerate("ABCDE")]
+        chosen, cap = self.select(cands)
+        self.assertEqual(syms(chosen), ["^A", "^B", "^C"])
+        self.assertFalse(cap)                                    # the run cap cut, not the day cap
+
+    def test_per_day_cap_10_counts_previous_runs(self):
+        cands = [cand("^%s" % c, score=9 - n) for n, c in enumerate("ABCDE")]
+        st = state_with(count=8)
+        self.assertEqual(st["signals_count"], 8)                 # premise
+        chosen, cap = self.select(cands, st)
+        self.assertEqual(syms(chosen), ["^A", "^B"])
+        self.assertTrue(cap)
+
+    def test_day_cap_already_reached_gives_nothing_and_cap_reached(self):
+        st = state_with(count=10)
+        chosen, cap = self.select([cand("^A")], st)
+        self.assertEqual((chosen, cap), ([], True))
+        chosen, cap = self.select([], st)                        # nothing left: no notice
+        self.assertEqual((chosen, cap), ([], False))
+
+    def test_day_cap_exactly_filled_is_not_cap_reached(self):
+        st = state_with(count=8)
+        chosen, cap = self.select([cand("^A"), cand("^B")], st)
+        self.assertEqual(len(chosen), 2)
+        self.assertFalse(cap)
+
+    def test_exposure_limit_2(self):
+        cands = [cand("EURUSD=X", score=5), cand("GBPUSD=X", score=4),
+                 cand("AUDUSD=X", score=3), cand("^A", score=2)]
+        # each long pair carries USD short: the third is out
+        self.assertEqual(plan_exposures("AUDUSD=X", LONG)[1], ("USD", "-"))      # premise
+        chosen, _ = self.select(cands)
+        self.assertEqual(syms(chosen), ["EURUSD=X", "GBPUSD=X", "^A"])
+        self.config["intraday"]["max_per_exposure"] = 3
+        chosen, _ = self.select(cands)
+        self.assertEqual(syms(chosen), ["EURUSD=X", "GBPUSD=X", "AUDUSD=X"])
+
+    def test_min_score_filters(self):
+        cands = [cand("^A", score=2), cand("^B", score=3), cand("^C", score=4)]
+        chosen, _ = self.select(cands)
+        self.assertEqual(syms(chosen), ["^C", "^B", "^A"])       # no minimum by default
+        self.config["intraday"]["min_score"] = 3
+        chosen, _ = self.select(cands)
+        self.assertEqual(syms(chosen), ["^C", "^B"])
+
+    def test_empty_candidates(self):
+        self.assertEqual(self.select([]), ([], False))
 
 
 if __name__ == "__main__":

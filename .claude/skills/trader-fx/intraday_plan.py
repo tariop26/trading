@@ -7,6 +7,7 @@ exactly like the daily trade ideas.
 import math
 from datetime import datetime, timezone
 
+import alert_state
 import intraday_signals
 import plan
 import sizing
@@ -158,3 +159,35 @@ def _scan_symbol(symbol, name, bars, ranges, ctx, config, prices, now_utc):
             "detail": primary.get("detail", ""), "bar_ts": bar_ts,
             "bar_iso": datetime.fromtimestamp(bar_ts, timezone.utc).isoformat(),
             "plan": p, "size": size, "exposures": plan.exposures(symbol, side)}, None
+
+
+def select(candidates, state, config, now_utc):
+    """(chosen, cap_reached): the candidates to announce, in sending order.
+
+    Drops a bar already announced and a symbol at rest unless its score is strictly higher
+    than the last alert's (a reinforcement: the kept copy carries `"previous"`), applies
+    `min_score`, ranks by score, then number of families, then symbol, keeps at most
+    `max_per_exposure` per currency exposure, and cuts to `max_per_run` and to what is left of
+    `max_per_day` (alerts already marked today count). `cap_reached` is True only when the DAY
+    cap, not the per-run cap, left candidates unsent."""
+    cfg = config["intraday"]
+    kept = []
+    for c in candidates:
+        if alert_state.signal_sent_for_bar(state, c["symbol"], c["side"], c["bar_iso"]):
+            continue
+        prev = alert_state.last_signal(state, c["symbol"], c["side"], now_utc,
+                                       cfg["cooldown_minutes"])
+        if prev is not None:
+            if not c["score"] > prev["score"]:
+                continue
+            c = dict(c, previous=prev)
+        if cfg["min_score"] is not None and c["score"] < cfg["min_score"]:
+            continue
+        kept.append(c)
+    kept.sort(key=lambda c: (-c["score"], -len(c["families"]), c["symbol"]))
+    retained, _skipped, _ties = plan._diversify(kept, len(kept) or 1,
+                                                cfg["max_per_exposure"])
+    remaining_day = max(0, cfg["max_per_day"] - state.get("signals_count", 0))
+    take = min(cfg["max_per_run"], remaining_day)
+    cap_reached = len(retained) > remaining_day and remaining_day <= cfg["max_per_run"]
+    return retained[:take], cap_reached
