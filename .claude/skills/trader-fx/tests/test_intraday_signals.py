@@ -2,6 +2,7 @@ import _path  # noqa
 import unittest
 
 import config
+import signals
 import intraday_signals as S
 from intraday_helpers import make_bars, utc
 
@@ -298,6 +299,185 @@ class SessionBreakTests(unittest.TestCase):
         s = S.session_break(bars, len(bars) - 1, ranges, PARAMS)
         self.assertEqual(s["detail"], "Londres")
         self.assertEqual(s["i"], len(bars) - 1)
+
+
+SIG_PARAMS = {"bb_period": 20, "bb_std": 2.0, "rsi_period": 14, "rsi_low": 30, "rsi_high": 70,
+              "stop_atr_mult": 1.5}
+
+
+def closes_to_bars(closes, spread=0.0005):
+    """Bars closing on `closes`, each with a high/low `spread` around open/close."""
+    ohlc = []
+    prev = closes[0]
+    for c in closes:
+        ohlc.append((prev, max(prev, c) + spread, min(prev, c) - spread, c))
+        prev = c
+    return make_bars(utc(2026, 11, 16, 8), ohlc)
+
+
+def calm(n=19):
+    """n quiet closes alternating 1.1000 / 1.1002."""
+    return [1.1000 + 0.0002 * (k % 2) for k in range(n)]
+
+
+class BbReturnTests(unittest.TestCase):
+    def bands(self, bars, i):
+        return S.bollinger(bars, i, 20, 2.0)
+
+    def test_bb_return_bearish(self):
+        bars = closes_to_bars(calm() + [1.1030, 1.1010])  # spike at 19, back inside at 20
+        i = len(bars) - 1
+        self.assertGreater(bars[i - 1][4], self.bands(bars, i - 1)[1])  # premise: above upper
+        self.assertLessEqual(bars[i][4], self.bands(bars, i)[1])        # premise: back inside
+        s = S.bb_return(bars, i, SIG_PARAMS)
+        self.assertEqual(s, {"family": "bb_return", "side": "baissier", "i": i,
+                             "stop_raw": bars[i - 1][2], "target_raw": self.bands(bars, i)[0],
+                             "detail": ""})
+        self.assertEqual(s["stop_raw"], bars[i - 1][2])
+
+    def test_bb_return_bullish_mirror(self):
+        bars = closes_to_bars(calm() + [1.0970, 1.0990])
+        i = len(bars) - 1
+        self.assertLess(bars[i - 1][4], self.bands(bars, i - 1)[2])  # premise: below lower
+        self.assertGreaterEqual(bars[i][4], self.bands(bars, i)[2])  # premise: back inside
+        s = S.bb_return(bars, i, SIG_PARAMS)
+        self.assertEqual(s, {"family": "bb_return", "side": "haussier", "i": i,
+                             "stop_raw": bars[i - 1][3], "target_raw": self.bands(bars, i)[0],
+                             "detail": ""})
+
+    def test_bb_stop_is_the_extreme_of_the_previous_bar(self):
+        bars = closes_to_bars(calm() + [1.1030, 1.1010])
+        i = len(bars) - 1
+        bars[i - 1] = bars[i - 1][:2] + (1.1100,) + bars[i - 1][3:]  # wick above the close
+        self.assertEqual(S.bb_return(bars, i, SIG_PARAMS)["stop_raw"], 1.1100)
+
+    def test_bb_close_on_the_band_counts_as_back_inside(self):
+        bars = closes_to_bars(calm() + [1.1030, 1.1010])
+        i = len(bars) - 1
+        lo, hi = 1.1000, 1.1030  # bisect the last close onto its own upper band
+        for _ in range(100):
+            mid = (lo + hi) / 2
+            bars[i] = bars[i][:4] + (mid,)
+            if mid <= self.bands(bars, i)[1]:
+                lo = mid
+            else:
+                hi = mid
+        bars[i] = bars[i][:4] + (lo,)
+        self.assertLessEqual(bars[i][4], self.bands(bars, i)[1])
+        self.assertAlmostEqual(bars[i][4], self.bands(bars, i)[1], places=9)  # on the band
+        self.assertEqual(S.bb_return(bars, i, SIG_PARAMS)["side"], "baissier")
+
+    def test_bb_still_outside_gives_none(self):
+        bars = closes_to_bars(calm() + [1.1030, 1.1028])
+        i = len(bars) - 1
+        self.assertGreater(bars[i - 1][4], self.bands(bars, i - 1)[1])
+        self.assertGreater(bars[i][4], self.bands(bars, i)[1])  # premise: still outside
+        self.assertIsNone(S.bb_return(bars, i, SIG_PARAMS))
+        bars = closes_to_bars(calm() + [1.0970, 1.0972])
+        self.assertLess(bars[i - 1][4], self.bands(bars, i - 1)[2])
+        self.assertLess(bars[i][4], self.bands(bars, i)[2])
+        self.assertIsNone(S.bb_return(bars, i, SIG_PARAMS))
+
+    def test_bb_previous_bar_inside_gives_none(self):
+        bars = closes_to_bars(calm() + [1.1001, 1.1000])
+        i = len(bars) - 1
+        self.assertLessEqual(bars[i - 1][4], self.bands(bars, i - 1)[1])
+        self.assertIsNone(S.bb_return(bars, i, SIG_PARAMS))
+
+    def test_bb_short_or_flat_series_gives_none(self):
+        # 20 bars with the spike on bar 19: the window of bar 18 is incomplete
+        bars = closes_to_bars(calm() + [1.1030])
+        self.assertIsNone(S.bollinger(bars, len(bars) - 2, 20, 2.0))  # premise: short
+        for i in (-1, 0, 1, 5, len(bars) - 1):
+            self.assertIsNone(S.bb_return(bars, i, SIG_PARAMS))
+        self.assertIsNone(S.bb_return([], 0, SIG_PARAMS))
+        # flat series: sd 0, bands undefined
+        f = flat(40)
+        for i in (1, 20, 21, 39):
+            self.assertIsNone(S.bb_return(f, i, SIG_PARAMS))
+
+
+class RsiExitTests(unittest.TestCase):
+    def rsis(self, bars, i):
+        closes = [b[4] for b in bars]
+        return signals.rsi(closes[:i], 14), signals.rsi(closes[:i + 1], 14)
+
+    def test_rsi_exit_bullish(self):
+        closes = [1.1000 - 0.001 * k for k in range(20)] + [1.0910]  # fall, then a rebound
+        bars = closes_to_bars(closes)
+        i = len(bars) - 1
+        prev, now = self.rsis(bars, i)
+        self.assertLess(prev, 30)       # premise
+        self.assertGreaterEqual(now, 30)
+        s = S.rsi_exit(bars, i, SIG_PARAMS)
+        atr = S.atr_bars(bars, i)
+        self.assertGreater(atr, 0)
+        self.assertEqual(s["family"], "rsi_exit")
+        self.assertEqual(s["side"], "haussier")
+        self.assertEqual(s["i"], i)
+        self.assertAlmostEqual(s["stop_raw"], closes[-1] - 1.5 * atr, places=12)
+        self.assertIsNone(s["target_raw"])
+        self.assertEqual(s["detail"], "")
+
+    def test_rsi_exit_bearish_mirror(self):
+        closes = [1.1000 + 0.001 * k for k in range(20)] + [1.1090]  # rise, then a drop
+        bars = closes_to_bars(closes)
+        i = len(bars) - 1
+        prev, now = self.rsis(bars, i)
+        self.assertGreater(prev, 70)    # premise
+        self.assertLessEqual(now, 70)
+        s = S.rsi_exit(bars, i, SIG_PARAMS)
+        atr = S.atr_bars(bars, i)
+        self.assertEqual(s["side"], "baissier")
+        self.assertEqual(s["i"], i)
+        self.assertAlmostEqual(s["stop_raw"], closes[-1] + 1.5 * atr, places=12)
+        self.assertIsNone(s["target_raw"])
+
+    def test_rsi_staying_in_zone_gives_none(self):
+        down = closes_to_bars([1.1000 - 0.001 * k for k in range(20)] + [1.0805])  # still falling
+        prev, now = self.rsis(down, len(down) - 1)
+        self.assertLess(prev, 30)
+        self.assertLess(now, 30)        # premise: no exit
+        self.assertIsNone(S.rsi_exit(down, len(down) - 1, SIG_PARAMS))
+        up = closes_to_bars([1.1000 + 0.001 * k for k in range(20)] + [1.1205])
+        prev, now = self.rsis(up, len(up) - 1)
+        self.assertGreater(prev, 70)
+        self.assertGreater(now, 70)
+        self.assertIsNone(S.rsi_exit(up, len(up) - 1, SIG_PARAMS))
+
+    def test_rsi_short_series_gives_none(self):
+        # rsi_period + 2 = 16 closes are needed; 15 are not enough
+        bars = closes_to_bars([1.1000 - 0.001 * k for k in range(14)] + [1.0970])
+        self.assertEqual(len(bars), 15)
+        self.assertIsNone(signals.rsi([b[4] for b in bars[:14]], 14))  # premise: prev missing
+        for i in (-1, 0, 1, 10, 13, 14):
+            self.assertIsNone(S.rsi_exit(bars, i, SIG_PARAMS))
+        self.assertIsNone(S.rsi_exit([], 0, SIG_PARAMS))
+        # 16 closes are enough
+        bars16 = closes_to_bars([1.1000 - 0.001 * k for k in range(15)] + [1.0960])
+        self.assertEqual(len(bars16), 16)
+        self.assertEqual(S.rsi_exit(bars16, 15, SIG_PARAMS)["side"], "haussier")
+
+    def test_rsi_flat_series_gives_none(self):
+        f = flat(40)
+        closes = [b[4] for b in f]
+        self.assertEqual(signals.rsi(closes, 14), 100.0)  # premise: constant RSI 100
+        self.assertEqual(signals.rsi(closes[:-1], 14), 100.0)
+        for i in (0, 15, 20, 39):
+            self.assertIsNone(S.rsi_exit(f, i, SIG_PARAMS))
+
+    def test_rsi_exit_none_when_atr_unavailable_or_zero(self):
+        bars = closes_to_bars([1.1000 - 0.001 * k for k in range(20)] + [1.0910])
+        i = len(bars) - 1
+        self.assertIsNotNone(S.rsi_exit(bars, i, SIG_PARAMS))
+        orig = S.atr_bars
+        try:
+            S.atr_bars = lambda b, k, n=14: None
+            self.assertIsNone(S.rsi_exit(bars, i, SIG_PARAMS))
+            S.atr_bars = lambda b, k, n=14: 0.0
+            self.assertIsNone(S.rsi_exit(bars, i, SIG_PARAMS))
+        finally:
+            S.atr_bars = orig
 
 
 if __name__ == "__main__":

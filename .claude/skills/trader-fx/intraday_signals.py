@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import config
 import sessions
+import signals
 
 BAR_S = 900
 FAMILIES = config.INTRADAY_FAMILIES
@@ -131,3 +132,58 @@ def session_break(bars, i, ranges, params):
             best = (end, {"family": "session_break", "side": side, "i": i,
                           "stop_raw": stop, "target_raw": None, "detail": r["name"]})
     return best[1] if best else None
+
+
+def bb_return(bars, i, params):
+    """Return inside the Bollinger bands after a close outside them.
+
+    baissier when the close of bar i - 1 is above the upper band of i - 1 and the close of
+    bar i is back at or under the upper band of i; haussier in mirror under the lower band.
+    Stop = high (baissier) or low (haussier) of bar i - 1; target = middle band at i.
+    None for a short or flat series (bands undefined).
+    """
+    if not 1 <= i < len(bars):
+        return None
+    period, std = params["bb_period"], params["bb_std"]
+    prev_bands = bollinger(bars, i - 1, period, std)
+    bands = bollinger(bars, i, period, std)
+    if prev_bands is None or bands is None:
+        return None
+    prev_close, close = bars[i - 1][4], bars[i][4]
+    mid = bands[0]
+    if prev_close > prev_bands[1] and close <= bands[1]:
+        return {"family": "bb_return", "side": "baissier", "i": i,
+                "stop_raw": bars[i - 1][2], "target_raw": mid, "detail": ""}
+    if prev_close < prev_bands[2] and close >= bands[2]:
+        return {"family": "bb_return", "side": "haussier", "i": i,
+                "stop_raw": bars[i - 1][3], "target_raw": mid, "detail": ""}
+    return None
+
+
+def rsi_exit(bars, i, params):
+    """RSI leaving an extreme zone: haussier when it crosses back up through rsi_low,
+    baissier when it crosses back down through rsi_high.
+
+    Stop = close -/+ stop_atr_mult x ATR; no target. None when the RSI is undefined (short
+    series) or the ATR is missing or zero.
+    """
+    if not 1 <= i < len(bars):
+        return None
+    closes = [b[4] for b in bars[:i + 1]]
+    period = params["rsi_period"]
+    now = signals.rsi(closes, period)
+    prev = signals.rsi(closes[:-1], period)
+    if now is None or prev is None:
+        return None
+    if prev < params["rsi_low"] and now >= params["rsi_low"]:
+        side, sign = "haussier", -1
+    elif prev > params["rsi_high"] and now <= params["rsi_high"]:
+        side, sign = "baissier", 1
+    else:
+        return None
+    atr = atr_bars(bars, i)
+    if atr is None or atr <= 0:
+        return None
+    return {"family": "rsi_exit", "side": side, "i": i,
+            "stop_raw": closes[-1] + sign * params["stop_atr_mult"] * atr,
+            "target_raw": None, "detail": ""}
