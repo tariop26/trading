@@ -181,6 +181,27 @@ class TestSignalMessage(unittest.TestCase):
         none = dict(PREVIOUS, families=[])
         self.assertIn("Déjà alerté à 09:31 Paris : aucun.", am.signal_message(candidate(), ACCOUNT, none))
 
+    def test_unreadable_sent_iso_omits_the_time_and_never_raises(self):
+        for previous in ({"families": ["session_break"], "sent_iso": "pas une date"},
+                         {"families": ["session_break"]},
+                         {"families": ["session_break"], "sent_iso": None},
+                         {"families": ["session_break"], "sent_iso": 12345}):
+            lines = am.signal_message(candidate(), ACCOUNT, previous).split("\n")
+            self.assertEqual(lines[0], "Signal en séance renforcé, non confirmé par le courtier : EUR/JPY baissier.")
+            self.assertEqual(lines[-2], "Déjà alerté : session_break.", previous)
+            self.assertEqual(lines[-1], am.DISCLAIMER)
+        empty = {"families": [], "sent_iso": "pas une date"}
+        self.assertIn("\nDéjà alerté : aucun.\n", am.signal_message(candidate(), ACCOUNT, empty))
+
+    def test_naive_sent_iso_is_read_as_utc(self):
+        naive = dict(PREVIOUS, sent_iso="2026-11-16T08:31:00")
+        self.assertIn("Déjà alerté à 09:31 Paris : session_break.",
+                      am.signal_message(candidate(), ACCOUNT, naive))
+
+    def test_summer_bar_start_shows_paris_plus_two(self):
+        ts = int(datetime(2026, 7, 15, 8, 15, tzinfo=timezone.utc).timestamp())
+        self.assertIn("Barre 15 min de 10:15 Paris.", am.signal_message(candidate(bar_ts=ts), ACCOUNT))
+
     def test_default_capital_line(self):
         lines = am.signal_message(candidate(), dict(ACCOUNT, source="default")).split("\n")
         self.assertEqual(lines[-2:], ["Taille calculée sur le capital par défaut.", am.DISCLAIMER])

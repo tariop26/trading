@@ -4,7 +4,7 @@ French, factual, Paris time, plain text (no markup: a title with "<" or "&" goes
 Never a result, a capital figure or an account id: the server does not know them. Never the words
 achat, acheter, vente, vendre, buy, sell, nor any advice: an idea is a mechanical plan to check.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 import plan
 import sessions
@@ -67,6 +67,17 @@ def idea_message(idea, account, waiting=0):
     return "\n".join(lines)
 
 
+def _paris_time(iso):
+    """HH:MM in Paris of an ISO string (naive = UTC), or None when it is missing or unreadable."""
+    try:
+        moment = datetime.fromisoformat(iso)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.astimezone(sessions.PARIS).strftime("%H:%M")
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def signal_message(candidate, account, previous=None):
     """An intraday signal: a mechanical plan on a 15 min bar, not confirmed by the broker."""
     sym = candidate["symbol"]
@@ -91,9 +102,10 @@ def signal_message(candidate, account, previous=None):
     if account.get("source") == "default":
         lines.append("Taille calculée sur le capital par défaut.")
     if previous:
-        sent = datetime.fromisoformat(previous["sent_iso"]).astimezone(sessions.PARIS).strftime("%H:%M")
-        lines.append("Déjà alerté à %s Paris : %s." % (
-            sent, _clip(", ".join(previous.get("families") or []) or "aucun")))
+        sent = _paris_time(previous.get("sent_iso"))
+        lines.append("Déjà alerté%s : %s." % (
+            " à %s Paris" % sent if sent else "",
+            _clip(", ".join(previous.get("families") or []) or "aucun")))
     lines.append(DISCLAIMER)
     return "\n".join(lines)
 
