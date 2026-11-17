@@ -5,8 +5,11 @@ Python 3 standard library only. Pure function. It reuses the rounding helpers of
 exactly like the daily trade ideas.
 """
 import math
+from datetime import datetime, timezone
 
+import intraday_signals
 import plan
+import sizing
 
 REASON_IMPOSSIBLE = "plan impossible"
 REASON_TOO_CLOSE = "stop trop proche"
@@ -65,3 +68,93 @@ def make_signal_plan(symbol, side, close, stop_raw, target_raw, daily_atr, param
         return None, REASON_RR
     return {"reference_price": entry, "stop": stop, "target": target, "rr": rr,
             "decimals": decimals, "limit_price": limit_price}, None
+
+
+REASON_NO_SIGNAL = "aucun signal récent"
+REASON_STALE = "plan caduc"
+
+
+def _daily_atr(ctx):
+    """Daily ATR in price units from `ctx` (last x atr_pct / 100), or None."""
+    if not isinstance(ctx, dict):
+        return None
+    last, atr_pct = ctx.get("last"), ctx.get("atr_pct")
+    if _number(last) and _number(atr_pct) and atr_pct > 0:
+        return last * atr_pct / 100
+
+
+def _score(families, side, trend, cfg, details):
+    """(points, why lines): score_per_signal per family, +/- score_trend for the trend."""
+    points, why = 0, []
+    for family in families:
+        points += cfg["score_per_signal"]
+        text = family + (" (%s)" % details[family] if details.get(family) else "")
+        why.append(plan._signed(cfg["score_per_signal"], text))
+    if trend in ("up", "down") and cfg["score_trend"]:
+        trend_side = plan.LONG if trend == "up" else plan.SHORT
+        text = "tendance haussière" if trend == "up" else "tendance baissière"
+        delta = cfg["score_trend"] if trend_side == side else -cfg["score_trend"]
+        points += delta
+        why.append(plan._signed(delta, text if delta > 0 else text + " (à contre-sens)"))
+    return points, why
+
+
+def scan_symbol(symbol, name, bars, ranges, ctx, config, prices, now_utc):
+    """(candidate, None) or (None, reason) for one symbol at `now_utc`.
+
+    Only closed bars are read. `ranges` comes from the caller (`session_ranges` on the
+    closed bars); `ctx` is `daily_context[symbol]`; `prices` = {forex pair: last close}
+    for the USD conversion of the size, which is never invented (a `to_confirm` or
+    `too_wide` size keeps the candidate).
+    """
+    try:
+        return _scan_symbol(symbol, name, bars, ranges, ctx, config, prices, now_utc)
+    except ArithmeticError as e:
+        return None, "calcul impossible (%s)" % type(e).__name__
+
+
+def _scan_symbol(symbol, name, bars, ranges, ctx, config, prices, now_utc):
+    params = intraday_signals.signal_params(config)
+    cfg = config["intraday"]
+    bars = intraday_signals.closed_bars(bars, now_utc)
+    n = len(bars)
+
+    found = []
+    for i in range(max(0, n - cfg["window_bars"]), n):
+        for signal in intraday_signals.detect_all(bars, i, ranges, params):
+            found.append((i, signal))
+    if not found:
+        return None, REASON_NO_SIGNAL
+
+    j = max(i for i, _ in found)
+    age = now_utc.timestamp() - (bars[j][0] + intraday_signals.BAR_S)
+    if age > cfg["max_age_minutes"] * 60:
+        return None, REASON_STALE
+
+    sides = {s["side"] for _, s in found}
+    if len(sides) > 1:
+        return None, plan.REASON_CONTRADICTORY
+    side = sides.pop()
+
+    in_window = {s["family"]: s for _, s in found}
+    families = [f for f in intraday_signals.FAMILIES if f in in_window]
+    primary = next(s for i, s in found if i == j)
+    details = {f: in_window[f].get("detail") for f in families}
+
+    daily_atr = _daily_atr(ctx)
+    trend = ctx.get("trend") if isinstance(ctx, dict) else None
+
+    p, reason = make_signal_plan(symbol, side, bars[j][4], primary["stop_raw"],
+                                 primary["target_raw"], daily_atr, params)
+    if p is None:
+        return None, reason
+
+    score, why = _score(families, side, trend, cfg, details)
+    size = sizing.size_idea(symbol, p["reference_price"], p["stop"], prices, config)
+    bar_ts = bars[j][0]
+    display = (cfg.get("mt5_symbols") or {}).get(symbol) or name
+    return {"symbol": symbol, "display_name": display, "side": side, "score": score,
+            "why": why, "families": families, "primary": primary["family"],
+            "detail": primary.get("detail", ""), "bar_ts": bar_ts,
+            "bar_iso": datetime.fromtimestamp(bar_ts, timezone.utc).isoformat(),
+            "plan": p, "size": size, "exposures": plan.exposures(symbol, side)}, None
