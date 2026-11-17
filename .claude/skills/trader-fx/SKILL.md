@@ -499,7 +499,7 @@ Les valeurs par défaut s'appliquent clé par clé.
 
 | clé | défaut | bornes |
 | --- | --- | --- |
-| `enabled` | `true` | `true` ou `false` |
+| `enabled` | `false` (désactivé depuis le rejeu historique, voir ci-dessous) | `true` ou `false` |
 | `symbols` | `[]` (tous les symboles du briefing) | liste de symboles Yahoo |
 | `mt5_symbols` | `{}` | objet nom Yahoo vers nom du courtier |
 | `families` | les cinq familles | liste non vide, sans doublon, parmi `session_break`, `bb_return`, `fractal_break`, `engulfing`, `rsi_exit` |
@@ -530,9 +530,12 @@ Les valeurs par défaut s'appliquent clé par clé.
 
 **Limites, dites honnêtement.**
 
-- Ces signaux **n'ont pas été testés sur l'historique** : un projet de rejeu viendra ensuite.
-  Ne pas s'y fier comme à des signaux éprouvés ; cinq familles sur plus de 100 symboles donnent
-  aussi de faux signaux, et le plafond limite le bruit sans prouver que les signaux sont bons.
+- Ces signaux **ont été testés sur l'historique (2016-2026, barres 1 min) et n'ont montré aucun
+  avantage** : le R moyen par trade est négatif après coûts sur EURUSD, GBPUSD, USDJPY et l'or
+  (environ −0,07 R sur 53 000 alertes simulées ; aucune famille n'est positive ; résultat stable entre
+  l'exploration 2016-2022 et la confirmation 2023-2026). C'est pourquoi `intraday.enabled` vaut `false`
+  par défaut. Ne pas risquer de capital réel sur ces alertes. Détail, méthode et limites :
+  `docs/research/2026-11-17-intraday-replay-findings.md` ; scripts : `research/intraday/`.
 - Les barres Yahoo sont gratuites, non officielles et retardées. « Clôturé » veut dire « vu dans
   les données Yahoo » : le prix du courtier diffère (spread, glissement), l'entrée est un plan.
 - `intraday.min_stop_pct` (0,05 %) et `intraday.max_stop_daily_atr` (1,0) sont des valeurs de
@@ -661,7 +664,7 @@ défaut. Les messages Telegram ne contiennent aucun secret.
    immédiate. Ne pas publier un Artifact à la place : la page automatique existe déjà.
 8. Signaux en séance. Ils sont envoyés par le serveur d'alertes, pas par Claude (voir
    « Signaux en séance »). Claude ne choisit jamais un signal pour l'utilisateur et ne le
-   présente jamais comme un conseil : c'est un plan mécanique, non testé sur l'historique,
+   présente jamais comme un conseil : c'est un plan mécanique, testé sur l'historique sans avantage,
    que l'utilisateur saisit lui-même dans MT5.
 
 ## Règles

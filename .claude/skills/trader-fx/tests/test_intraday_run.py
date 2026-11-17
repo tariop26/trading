@@ -74,6 +74,7 @@ def event(currency="EUR", minutes=20, impact="High"):
 class CollectTests(unittest.TestCase):
     def setUp(self):
         self.config = cfgmod.defaults()
+        self.config["intraday"]["enabled"] = True      # désactivé par défaut depuis le rejeu historique
         self.state = alert_state.empty_state(TODAY)
         self.fetch = Fetch()
 

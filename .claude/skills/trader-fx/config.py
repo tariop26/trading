@@ -21,7 +21,7 @@ DEFAULTS = {
     "contracts": {},
     "alerts": {"auto_push": False},
     "intraday": {
-        "enabled": True,
+        "enabled": False,
         "symbols": [],
         "mt5_symbols": {},
         "families": list(INTRADAY_FAMILIES),

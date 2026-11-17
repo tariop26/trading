@@ -19,7 +19,7 @@ EXPECTED = {
     "contracts": {},
     "alerts": {"auto_push": False},
     "intraday": {
-        "enabled": True, "symbols": [], "mt5_symbols": {},
+        "enabled": False, "symbols": [], "mt5_symbols": {},
         "families": ["session_break", "bb_return", "fractal_break", "engulfing", "rsi_exit"],
         "range_minutes": 30, "break_window_hours": 3,
         "bb_period": 20, "bb_std": 2.0,
