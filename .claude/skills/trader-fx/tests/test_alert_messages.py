@@ -1,6 +1,7 @@
 import _path  # noqa
 import re
 import unittest
+from datetime import datetime, timezone
 
 import alert_messages as am
 
@@ -135,6 +136,103 @@ class TestEventAndDown(unittest.TestCase):
 
     def test_down(self):
         self.assertEqual(am.down_message(), "Impossible de vérifier vos stops : données Yahoo indisponibles.")
+
+
+BAR_TS = int(datetime(2026, 11, 16, 8, 15, tzinfo=timezone.utc).timestamp())
+PREVIOUS = {"score": 3, "families": ["session_break"], "sent_iso": "2026-11-16T08:31:00+00:00"}
+FORBIDDEN_SIGNAL = re.compile(r"(?i)\b(achat|acheter|vente|vendre|buy|sell|gagnant|profit|prévision)\b")
+
+
+def candidate(**kw):
+    c = {"symbol": "EURJPY=X", "display_name": "EUR/JPY", "side": "baissier", "score": 3,
+         "why": "x", "families": ["session_break", "rsi_exit"], "primary": "session_break",
+         "detail": "Londres", "bar_ts": BAR_TS, "bar_iso": "2026-11-16T08:15:00+00:00",
+         "plan": {"reference_price": 176.7, "stop": 177.1, "target": 175.9, "rr": 2.0,
+                  "decimals": 3, "limit_price": 176.64},
+         "size": {"status": "ok", "lots": 0.45, "size": None, "risk_usd": 480.75, "units": 45000},
+         "exposures": []}
+    c.update(kw)
+    return c
+
+
+class TestSignalMessage(unittest.TestCase):
+    def test_signal_message_exact_text(self):
+        self.assertEqual(am.signal_message(candidate(), ACCOUNT), "\n".join([
+            "Signal en séance, non confirmé par le courtier : EUR/JPY baissier.",
+            "Signaux : session_break (Londres), rsi_exit. Barre 15 min de 09:15 Paris.",
+            "Entrée 176.700 (zone valable jusqu'à 176.640), stop 177.100, cible 175.900 (1:2).",
+            "Taille 0.45 lot, risque 480.75 USD (0.5 % du capital).",
+            "Plan mécanique à valider, pas un conseil. Prix Yahoo, retardé."]))
+
+    def test_ratio_and_empty_detail(self):
+        c = candidate(detail="")
+        c["plan"] = dict(c["plan"], rr=1.2)
+        text = am.signal_message(c, ACCOUNT)
+        self.assertIn("(1:1.2).", text)
+        self.assertIn("Signaux : session_break, rsi_exit. Barre", text)
+
+    def test_reinforced_message_mentions_previous_families_and_time(self):
+        lines = am.signal_message(candidate(), ACCOUNT, PREVIOUS).split("\n")
+        self.assertEqual(lines[0], "Signal en séance renforcé, non confirmé par le courtier : EUR/JPY baissier.")
+        self.assertEqual(lines[-2], "Déjà alerté à 09:31 Paris : session_break.")
+        self.assertEqual(lines[-1], am.DISCLAIMER)
+        summer = dict(PREVIOUS, sent_iso="2026-07-15T08:31:00+00:00", families=["a", "b"])
+        self.assertIn("Déjà alerté à 10:31 Paris : a, b.", am.signal_message(candidate(), ACCOUNT, summer))
+        none = dict(PREVIOUS, families=[])
+        self.assertIn("Déjà alerté à 09:31 Paris : aucun.", am.signal_message(candidate(), ACCOUNT, none))
+
+    def test_default_capital_line(self):
+        lines = am.signal_message(candidate(), dict(ACCOUNT, source="default")).split("\n")
+        self.assertEqual(lines[-2:], ["Taille calculée sur le capital par défaut.", am.DISCLAIMER])
+        self.assertNotIn("par défaut", am.signal_message(candidate(), ACCOUNT))
+        both = am.signal_message(candidate(), dict(ACCOUNT, source="default"), PREVIOUS).split("\n")
+        self.assertEqual(both[-3], "Taille calculée sur le capital par défaut.")
+        self.assertTrue(both[-2].startswith("Déjà alerté"))
+
+    def test_to_confirm_and_too_wide_sizes_never_invent_a_figure(self):
+        for status, line in (("to_confirm", "Taille à confirmer chez le courtier."),
+                             ("too_wide", "Stop trop large pour le risque fixé.")):
+            size = {"status": status, "lots": None, "size": None, "risk_usd": None}
+            text = am.signal_message(candidate(size=size), ACCOUNT)
+            self.assertEqual(text.split("\n")[3], line)
+            self.assertNotIn("risque 480", text)
+            self.assertNotIn("Taille 0", text)
+
+    def test_display_name_falls_back_to_pair_label(self):
+        for name in (None, ""):
+            c = candidate(display_name=name)
+            self.assertIn("EUR/JPY baissier.", am.signal_message(c, ACCOUNT).split("\n")[0])
+        c = candidate()
+        del c["display_name"]
+        self.assertIn("EUR/JPY baissier.", am.signal_message(c, ACCOUNT).split("\n")[0])
+
+    def test_display_name_is_clipped_and_shown(self):
+        self.assertIn("CAC 40 baissier.", am.signal_message(candidate(display_name="CAC 40"), ACCOUNT))
+        text = am.signal_message(candidate(display_name="N" * 5000, detail="D" * 5000), ACCOUNT)
+        self.assertIn("N" * 299 + "…", text)
+        self.assertNotIn("N" * 300, text)
+        self.assertIn("D" * 299 + "…", text)
+        self.assertLess(len(text), am.TELEGRAM_LIMIT)
+
+    def test_no_forbidden_word_and_under_telegram_limit(self):
+        self.assertTrue(FORBIDDEN_SIGNAL.search("un achat"))
+        self.assertTrue(FORBIDDEN_SIGNAL.search("Sell now"))
+        texts = [am.signal_message(candidate(), ACCOUNT),
+                 am.signal_message(candidate(), dict(ACCOUNT, source="default"), PREVIOUS),
+                 am.signal_message(candidate(side="haussier"), ACCOUNT, PREVIOUS),
+                 am.signal_message(candidate(display_name="N" * 5000, detail="D" * 5000), ACCOUNT, PREVIOUS),
+                 am.signal_message(candidate(size={"status": "too_wide"}), ACCOUNT),
+                 am.cap_message(10)]
+        for text in texts:
+            self.assertIsNone(FORBIDDEN_SIGNAL.search(text), text)
+            self.assertNotIn("à prendre", text)
+            self.assertLess(len(text), am.TELEGRAM_LIMIT)
+
+    def test_cap_message_text(self):
+        self.assertEqual(am.cap_message(10),
+                         "Plafond de 10 alertes de signal atteint pour aujourd'hui : "
+                         "les suivantes ne sont pas envoyées.")
+        self.assertIn("Plafond de 3 alertes", am.cap_message(3.0))
 
 
 class TestEveryMessage(unittest.TestCase):

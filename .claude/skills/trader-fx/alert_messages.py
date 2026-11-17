@@ -67,6 +67,42 @@ def idea_message(idea, account, waiting=0):
     return "\n".join(lines)
 
 
+def signal_message(candidate, account, previous=None):
+    """An intraday signal: a mechanical plan on a 15 min bar, not confirmed by the broker."""
+    sym = candidate["symbol"]
+    plan_ = candidate["plan"]
+    dec = plan_.get("decimals")
+    name = _clip(candidate.get("display_name") or pair_label(sym))
+    detail = candidate.get("detail")
+    families = []
+    for family in candidate.get("families") or []:
+        families.append("%s (%s)" % (family, _clip(detail)) if family == candidate.get("primary") and detail
+                        else str(family))
+    bar = datetime.fromtimestamp(candidate["bar_ts"], sessions.PARIS).strftime("%H:%M")
+    lines = [
+        "Signal en séance%s, non confirmé par le courtier : %s %s." % (
+            " renforcé" if previous else "", name, candidate["side"]),
+        "Signaux : %s. Barre 15 min de %s Paris." % (", ".join(families) or "aucun", bar),
+        "Entrée %s (zone valable jusqu'à %s), stop %s, cible %s (1:%g)." % (
+            _price(sym, dec, plan_["reference_price"]), _price(sym, dec, plan_["limit_price"]),
+            _price(sym, dec, plan_["stop"]), _price(sym, dec, plan_["target"]), plan_["rr"]),
+        _size_line({"size": candidate.get("size")}, account),
+    ]
+    if account.get("source") == "default":
+        lines.append("Taille calculée sur le capital par défaut.")
+    if previous:
+        sent = datetime.fromisoformat(previous["sent_iso"]).astimezone(sessions.PARIS).strftime("%H:%M")
+        lines.append("Déjà alerté à %s Paris : %s." % (
+            sent, _clip(", ".join(previous.get("families") or []) or "aucun")))
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
+def cap_message(max_per_day):
+    return ("Plafond de %d alertes de signal atteint pour aujourd'hui : "
+            "les suivantes ne sont pas envoyées." % int(max_per_day))
+
+
 def touch_message(hit):
     rule = hit["rule"]
     sym = rule["symbol"]
