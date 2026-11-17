@@ -263,5 +263,66 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(len(self.up(events, [None, {"id": "x"}, rule()])), 1)
 
 
+class TestSignalFilters(unittest.TestCase):
+    NOW = datetime(2026, 11, 16, 13, 0, tzinfo=timezone.utc)
+
+    def ev(self, h, m, currency="USD", impact="High", title="Core CPI m/m"):
+        utc = datetime(2026, 11, 16, h, m, tzinfo=timezone.utc).isoformat()
+        return {"utc": utc, "currency": currency, "title": title, "impact": impact}
+
+    def blocked(self, symbol, events, **kw):
+        return ck.news_blocked(symbol, events, self.NOW, **kw)
+
+    def test_news_blocked_inside_window_for_a_pair_currency(self):
+        self.assertTrue(self.blocked("EURUSD=X", [self.ev(13, 20, "USD")]))
+        self.assertTrue(self.blocked("EURUSD=X", [self.ev(13, 20, "EUR")]))
+        self.assertTrue(self.blocked("EURJPY=X", [self.ev(13, 1, "JPY")]))
+        self.assertTrue(self.blocked("EURUSD=X", [self.ev(13, 30)]))        # exactly now + 30 min
+        self.assertTrue(self.blocked("EURUSD=X", [self.ev(13, 45)], window_minutes=45))
+
+    def test_news_not_blocked_for_other_currency_or_low_impact_or_past_or_beyond_30_min(self):
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(13, 20, "GBP")]))
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(13, 20, impact="Medium")]))
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(13, 20, impact="Low")]))
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(12, 59)]))       # past
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(13, 0)]))        # exactly now
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(13, 31)]))       # beyond 30 min
+        self.assertFalse(self.blocked("EURUSD=X", [self.ev(13, 45)]))       # beyond the default
+        self.assertFalse(self.blocked("EURUSD=X", []))
+
+    def test_news_blocked_uses_usd_for_non_forex(self):
+        self.assertTrue(self.blocked("^FCHI", [self.ev(13, 20, "USD")]))
+        self.assertTrue(self.blocked("GC=F", [self.ev(13, 20, "USD")]))
+        self.assertFalse(self.blocked("^FCHI", [self.ev(13, 20, "EUR")]))
+
+    def test_news_ignores_malformed_events(self):
+        bad = [None, "x", 3, [], {"impact": "High"}, {"impact": "High", "currency": "USD"},
+               {"utc": "nope", "impact": "High", "currency": "USD"},
+               {"utc": "2026-11-16T13:20:00", "impact": "High", "currency": "USD"},   # naive
+               {"utc": None, "impact": "High", "currency": "USD"},
+               {"utc": "2026-11-16T13:20:00+00:00", "impact": "High"}]
+        self.assertFalse(self.blocked("EURUSD=X", bad))
+        self.assertTrue(self.blocked("EURUSD=X", bad + [self.ev(13, 20)]))
+        for not_a_list in (None, "events", 5, {"utc": "2026-11-16T13:20:00+00:00"}):
+            self.assertFalse(self.blocked("EURUSD=X", not_a_list))
+
+    def test_is_held_matches_symbol_and_side_only(self):
+        rules = [rule(kind="stop"), rule(kind="cible", side="baissier", symbol="GBPUSD=X")]
+        self.assertTrue(ck.is_held("EURUSD=X", "haussier", rules))
+        self.assertTrue(ck.is_held("GBPUSD=X", "baissier", rules))
+        self.assertFalse(ck.is_held("EURUSD=X", "baissier", rules))
+        self.assertFalse(ck.is_held("GBPUSD=X", "haussier", rules))
+        self.assertFalse(ck.is_held("USDJPY=X", "haussier", rules))
+        self.assertFalse(ck.is_held("EURUSD=X", "haussier", []))
+
+    def test_is_held_ignores_invalid_rules(self):
+        bad = [None, "x", {"id": "x"}, rule(level="nope"), rule(kind="autre"),
+               rule(side="plat"), rule(symbol=3)]
+        self.assertFalse(ck.is_held("EURUSD=X", "haussier", bad))
+        self.assertTrue(ck.is_held("EURUSD=X", "haussier", bad + [rule()]))
+        for not_a_list in (None, "rules", 5, {"symbol": "EURUSD=X", "side": "haussier"}):
+            self.assertFalse(ck.is_held("EURUSD=X", "haussier", not_a_list))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -158,3 +158,32 @@ def upcoming_events(events, open_rules, now_utc, state):
             out.append({"event": event, "minutes": max(1, int(ahead.total_seconds() // 60)),
                         "symbols": concerned})
     return out
+
+
+# ---------------------------------------------------------------- intraday signal filters
+
+def news_blocked(symbol, events, now_utc, window_minutes=30):
+    """True when a high-impact event of a currency of `symbol` starts in (now, now + window].
+
+    Same boundaries as `upcoming_events`: an event exactly at "now" does not block, one exactly
+    at the end of the window does. A malformed event is skipped, never fatal."""
+    currencies = trade_currencies(symbol)
+    window = timedelta(minutes=window_minutes)
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict) or event.get("impact") != "High":
+            continue
+        currency = event.get("currency")
+        start = _aware(event.get("utc"))
+        if not isinstance(currency, str) or currency not in currencies or start is None:
+            continue
+        if timedelta(0) < start - now_utc <= window:
+            return True
+    return False
+
+
+def is_held(symbol, side, open_rules):
+    """True when a valid open rule already follows this symbol on this side."""
+    if not isinstance(open_rules, list):
+        return False
+    return any(_valid_rule(r) and r["symbol"] == symbol and r["side"] == side
+               for r in open_rules)
