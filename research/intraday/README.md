@@ -6,8 +6,8 @@ Ils servent à refaire ou contrôler les chiffres de la note.
 
 ## Données attendues (non versionnées)
 
-- **Barres 1 minute MT5** exportées de Google Drive en CSV (`date;time;open;high;low;close;volume;spread_moyen;spread_max`,
-  séparateur virgule, une feuille par mois, nom `SYMBOLE_AAAA_MM.csv`), à ranger dans `fx_data/<SYMBOLE>/`
+- **Barres 1 minute MT5** exportées de Google Drive en CSV (`date,time,open,high,low,close,volume,spread_moyen,spread_max`,
+  séparateur virgule (les relevés de positions MQL5, eux, utilisent le point-virgule), une feuille par mois, nom `SYMBOLE_AAAA_MM.csv`), à ranger dans `fx_data/<SYMBOLE>/`
   à côté des scripts : EURUSD, GBPUSD, USDJPY (2016-01 à 2026-10), XAUUSD, DAX, NAS100, US30 (2018-01 à fin sept. ou oct. 2026).
 - L'heure des fichiers est celle du serveur du courtier : **New York + 7 h** (UTC+2 l'hiver, UTC+3 l'été).
   `replay2.server_to_utc` fait la conversion.
