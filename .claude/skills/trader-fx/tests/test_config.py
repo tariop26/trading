@@ -199,7 +199,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(set(raw) - set(config.DEFAULTS), set())
         for section, value in config.DEFAULTS.items():
             if isinstance(value, dict) and section != "contracts":
-                self.assertEqual(set(raw.get(section, {})) - set(value), set(), section)
+                self.assertEqual(set(raw[section]) - set(value), set(), section)
         cfg = config.load_config(EXAMPLE)
         self.assertIn("^FCHI", cfg["contracts"])
         self.assertIn("GC=F", cfg["contracts"])

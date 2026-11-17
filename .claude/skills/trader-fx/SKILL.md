@@ -20,7 +20,9 @@ description: >-
   de stop et de cible des trades ouverts (alerts.json) et une page « Journal
   de trading ». Un serveur d'alertes sur GitHub Actions surveille les stops et
   les cibles, annonce les annonces à fort impact et les idées de trade en
-  formation, et écrit sur Telegram. Un briefing automatique publie la page du
+  formation, détecte des signaux en séance sur des barres de 15 minutes (cinq
+  familles, plafonnés à 10 par jour, à saisir à la main dans MT5) et écrit sur
+  Telegram. Un briefing automatique publie la page du
   briefing sur GitHub Pages (lisible sur téléphone) à 04 h 30 et 22 h 15 UTC et
   envoie le lien et le résumé sur Telegram. Use when the user says "briefing forex", "scan
   forex", "force des devises", "calendrier économique", "matières premières",
@@ -29,7 +31,8 @@ description: >-
   l'idée", "forex briefing", "currency strength", "economic calendar", "what
   is moving in forex", "commodities and indices scan", "trade ideas", "position
   size", "lot size", "trading journal", "trade stats", "serveur d'alertes", "alertes Telegram",
-  "alert server", "Telegram alerts", "briefing automatique", "briefing sur
+  "alert server", "Telegram alerts", "signaux en séance", "alertes intraday",
+  "intraday signals", "briefing automatique", "briefing sur
   téléphone", "auto briefing", "briefing on my phone", or at the start of a
   forex / CFD trading day.
 argument-hint: "[brief | page] [--list FILE] [--no-cache] [--json] [--config PATH] ; journal.py [open | amend | close | list | stats | alerts | page]"
@@ -406,6 +409,143 @@ chez le courtier » : le stop réel reste chez le courtier. Le calendrier est un
 officiel. GitHub peut retarder un lancement planifié ; rien ne prévient si le
 planificateur s'arrête. Les idées en séance viennent d'une barre du jour en formation.
 
+## Signaux en séance
+
+Le serveur d'alertes détecte aussi des trades pendant la séance, sur des barres de
+15 minutes Yahoo (mêmes symboles que le briefing), et les envoie sur Telegram. **C'est
+l'utilisateur qui passe chaque ordre, à la main, dans MT5** : le serveur ne se connecte
+jamais au courtier et n'envoie aucun ordre (FundedNext exige un trading manuel). Une
+alerte est un plan mécanique à valider, pas un conseil. Tout est calculé en Python, sans
+appel à Claude, et Claude ne choisit aucun signal à la place de l'utilisateur.
+
+**Les cinq familles.** Toutes lisent des barres de 15 minutes **clôturées** (une barre dont
+la fin est passée) ; chacune vaut pour un sens (haussier ou baissier). L'entrée est la
+clôture de la barre du signal.
+
+| famille | déclencheur | stop | cible |
+| --- | --- | --- | --- |
+| `session_break` | une barre clôture hors d'une plage : Asie (00:00 à 07:00 UTC), ouverture de Londres, ouverture de New York (30 premières minutes de chaque session) ; seulement dans les 3 h qui suivent la fin de la plage, première clôture de ce côté | l'autre côté de la plage | 2R |
+| `bb_return` | bandes de Bollinger 20 périodes, 2 écarts-types sur les clôtures : la barre précédente a clôturé hors de la bande, la courante clôture de nouveau dedans ; le sens est celui du retour vers le milieu | extrême de la barre qui était hors bande | bande du milieu |
+| `fractal_break` | fractale de Williams (un extrême entouré de 2 barres moins extrêmes de chaque côté, confirmée 2 barres plus tard) : une barre clôture au-delà de la dernière fractale confirmée, qu'aucune clôture n'avait encore franchie | dernière fractale opposée confirmée, ou 1,5 ATR (15 min) s'il n'y en a pas | 2R |
+| `engulfing` | le corps de la barre courante englobe celui de la précédente, de couleur opposée, après au moins 3 barres consécutives dans le sens opposé | extrême de l'englobante | 2R |
+| `rsi_exit` | RSI 14 sous 30 à la barre précédente et au moins 30 à la courante (haussier) ; au-dessus de 70 puis 70 ou moins (baissier). Le signal part au retour dans la zone normale, pas pendant que le prix reste en zone | 1,5 ATR (15 min) | 2R |
+
+La cible 2R est `plan.target_r`, le stop 1,5 ATR est `plan.stop_atr_mult` (section
+« Configuration »). Le plan est arrondi comme les idées du briefing (stop en s'éloignant de
+l'entrée, cible en se rapprochant). Il est écarté, avec sa raison, quand il est impossible
+après arrondi, quand le stop est sous `intraday.min_stop_pct` du prix (« stop trop proche »),
+au-dessus de `intraday.max_stop_daily_atr` fois l'ATR journalier (« stop trop large »,
+par exemple une plage asiatique démesurée), quand le rapport 1:R est sous `intraday.min_rr`
+ou quand l'ATR journalier manque. Le stop et la cible sont ceux du signal de la barre la plus
+récente.
+
+**Score, classement, plafonds.**
+
+- Score : +2 par famille concordante dans les 4 dernières barres clôturées du symbole (une
+  heure), +1 si la tendance journalière va dans le sens, −1 à contre-sens. Un signal contraire
+  dans la même fenêtre annule l'alerte (« signaux contradictoires »).
+- Classement : score décroissant, puis nombre de familles, puis symbole. Diversification : au
+  plus 2 alertes par exposition de devise (`intraday.max_per_exposure`).
+- Plafonds : 3 alertes par lancement, 10 par jour UTC. Quand le plafond du jour est atteint,
+  un seul message le dit (« Plafond de 10 alertes de signal atteint pour aujourd'hui »), puis
+  rien. Le classement agit à l'intérieur d'un lancement ; d'un lancement à l'autre c'est
+  premier arrivé, premier servi, aucune capacité n'est réservée. Si les 10 sont épuisés trop tôt
+  dans la journée, `intraday.min_score` coupe les alertes faibles (défaut : aucun seuil).
+- Déduplication : jamais deux alertes pour la même barre, le même symbole et le même sens. Après
+  une alerte, un repos de 2 heures par symbole et par sens. Exception, le **renforcement** : un
+  nouveau signal concordant pendant le repos produit une alerte seulement si son score est
+  **strictement supérieur** à celui de la dernière alerte ; le message dit alors « Signal en
+  séance renforcé » et rappelle les familles déjà alertées. Elle compte dans les plafonds.
+- Le repos et le compteur du jour sont remis à zéro au changement de jour UTC. Le cron ne tourne
+  jamais entre 21 h 52 et 07 h 07 UTC : en production le repos ne peut donc pas enjamber minuit ;
+  un lancement manuel à cette heure pourrait répéter une alerte.
+
+**Validité et filtres.**
+
+- Plan caduc : plus de 30 minutes (`intraday.max_age_minutes`) depuis la **clôture** de la barre
+  du signal (une barre qui a clôturé à 09:30 n'alerte plus après 10:00).
+- Zone de validité : le message donne un prix limite, l'entrée plus 0,25 R dans le sens du trade
+  (`intraday.validity_r`) ; au-delà, le plan est caduc.
+- Pas d'alerte dans les 30 minutes qui précèdent une annonce à fort impact sur une devise de la
+  paire.
+- Alerte sautée quand un trade de même symbole et de même sens est déjà ouvert dans `alerts.json`.
+  Si `alerts.json` est absent, cette vérification est sautée et l'alerte part quand même.
+- Aucune alerte un week-end fermé (`closed_weekend`).
+- Si le briefing échoue, il n'y a aucun signal ce lancement : l'ATR et la tendance journaliers
+  viennent du briefing (une ligne « briefing indisponible : signaux en séance sautés. » le dit).
+- Un symbole sans barres de 15 minutes est sauté, une ligne le dit dans le journal du lancement.
+
+**Le message.** Français, heure de Paris, texte brut ; l'heure de la barre est son heure de
+début. Exemple de forme :
+
+```text
+Signal en séance, non confirmé par le courtier : EUR/JPY baissier.
+Signaux : session_break (Londres), rsi_exit. Barre 15 min de 09:15 Paris.
+Entrée 176.700 (zone valable jusqu'à 176.640), stop 177.100, cible 175.900 (1:2).
+Taille 0.45 lot, risque 480.75 USD (0.5 % du capital).
+Plan mécanique à valider, pas un conseil. Prix Yahoo, retardé.
+```
+
+Une taille non calculable reste « Taille à confirmer chez le courtier ». Pour un renforcement,
+le titre devient « Signal en séance renforcé » et une ligne « Déjà alerté à HH:MM Paris : … »
+rappelle les familles déjà vues. Pour saisir l'ordre dans MT5, `intraday.mt5_symbols` traduit le
+nom Yahoo en nom du courtier (suffixes de FundedNext), par exemple
+`{"EURJPY=X": "EURJPY.r"}` : le nom du courtier remplace alors le nom de la paire dans le
+message.
+
+**Configuration `intraday`.** Section facultative de `trader/fx/config.json` ; toute clé
+inconnue est refusée, toute valeur hors bornes aussi (une ligne d'explication, code de sortie 1).
+Les valeurs par défaut s'appliquent clé par clé.
+
+| clé | défaut | bornes |
+| --- | --- | --- |
+| `enabled` | `true` | `true` ou `false` |
+| `symbols` | `[]` (tous les symboles du briefing) | liste de symboles Yahoo |
+| `mt5_symbols` | `{}` | objet nom Yahoo vers nom du courtier |
+| `families` | les cinq familles | liste non vide, sans doublon, parmi `session_break`, `bb_return`, `fractal_break`, `engulfing`, `rsi_exit` |
+| `range_minutes` | 30 | entier de 15 à 120, multiple de 15 |
+| `break_window_hours` | 3 | 1 à 6 |
+| `bb_period` | 20 | entier de 5 à 100 |
+| `bb_std` | 2.0 | 1 à 4 |
+| `rsi_period` | 14 | entier de 5 à 50 |
+| `rsi_low` | 30 | 5 à 50 |
+| `rsi_high` | 70 | 50 à 95 |
+| `engulfing_min_prior` | 3 | entier de 1 à 6 |
+| `min_stop_pct` | 0.05 | plus de 0 et au plus 1 (en % du prix) |
+| `max_stop_daily_atr` | 1.0 | plus de 0 et au plus 5 (en ATR journalier) |
+| `min_rr` | 1.0 | 0,5 à 5 |
+| `score_per_signal` | 2 | entier de 1 à 5 |
+| `score_trend` | 1 | entier de 0 à 3 |
+| `window_bars` | 4 | entier de 1 à 12 |
+| `max_age_minutes` | 30 | entier de 15 à 120 |
+| `validity_r` | 0.25 | plus de 0 et au plus 1 |
+| `max_per_run` | 3 | entier de 1 à 10 |
+| `max_per_day` | 10 | entier de 1 à 50 |
+| `max_per_exposure` | 2 | entier de 1 à 5 |
+| `cooldown_minutes` | 120 | entier de 0 à 720 (0 : pas de repos) |
+| `min_score` | `null` (aucun seuil) | entier ou `null` |
+
+`config.example.json` contient un bloc `intraday` minimal ; copier le fichier vers
+`trader/fx/config.json`. Sur GitHub, la section vient du secret `TRADER_FX_CONFIG`.
+
+**Limites, dites honnêtement.**
+
+- Ces signaux **n'ont pas été testés sur l'historique** : un projet de rejeu viendra ensuite.
+  Ne pas s'y fier comme à des signaux éprouvés ; cinq familles sur plus de 100 symboles donnent
+  aussi de faux signaux, et le plafond limite le bruit sans prouver que les signaux sont bons.
+- Les barres Yahoo sont gratuites, non officielles et retardées. « Clôturé » veut dire « vu dans
+  les données Yahoo » : le prix du courtier diffère (spread, glissement), l'entrée est un plan.
+- `intraday.min_stop_pct` (0,05 %) et `intraday.max_stop_daily_atr` (1,0) sont des valeurs de
+  départ, à ajuster après avoir mesuré des alertes réelles.
+- Le cron est inchangé (toutes les 15 minutes à :07, :22, :37 et :52, de 07 à 21 h UTC, du lundi
+  au vendredi) : une alerte arrive environ 7 à 10 minutes après la clôture de la barre.
+  GitHub peut retarder ou abandonner un lancement, donc une alerte peut arriver tard (plan
+  caduc après 30 minutes) ou jamais.
+- Un trade pris à partir d'une alerte de signal n'est pas dans `briefing.json` : pour le
+  journal, `journal.py open` le déclare « hors plan » et exige `--stop`.
+- Le plafond de 10 par jour ne compte que les alertes de signal ; les idées du briefing gardent
+  leur plafond de 3 par lancement. `alerts.json` peut être en retard sur les trades réels.
+
 ## Briefing publié
 
 Le briefing se met à jour tout seul sur GitHub, sans que le PC soit allumé, et se lit sur
@@ -519,6 +659,10 @@ défaut. Les messages Telegram ne contiennent aucun secret.
    le PC, lui donner le lien de la page (voir « Briefing publié ») et lui dire de lancer
    le workflow « Briefing » à la main depuis l'onglet Actions pour une mise à jour
    immédiate. Ne pas publier un Artifact à la place : la page automatique existe déjà.
+8. Signaux en séance. Ils sont envoyés par le serveur d'alertes, pas par Claude (voir
+   « Signaux en séance »). Claude ne choisit jamais un signal pour l'utilisateur et ne le
+   présente jamais comme un conseil : c'est un plan mécanique, non testé sur l'historique,
+   que l'utilisateur saisit lui-même dans MT5.
 
 ## Règles
 
