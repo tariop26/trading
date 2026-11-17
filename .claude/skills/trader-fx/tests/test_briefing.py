@@ -16,6 +16,7 @@ import briefing
 import config
 import data
 import fx
+import signals
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIX = os.path.join(HERE, "fixtures")
@@ -23,7 +24,8 @@ DAY = 86400
 DISCLAIMER = ("Liste de graphiques qui ont matché une règle. Pas un conseil. "
               "Données Yahoo, retardées.")
 SPEC_KEYS = {"as_of", "market_state", "counts", "data_age", "calendar", "strength",
-             "swing", "day_plan", "trade_ideas", "warnings", "disclaimer"}
+             "swing", "daily_context", "day_plan", "trade_ideas", "warnings",
+             "disclaimer"}
 IDEA_KEYS = {"reference", "account", "ideas", "skipped", "total_risk_usd",
              "total_risk_pct", "max_total_pct", "over_cap", "max_ideas_within_cap",
              "ties_at_cutoff", "total_leverage"}
@@ -285,6 +287,24 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(set(b["day_plan"]), {"sessions", "levels", "events_24h"})
         self.assertEqual(set(b["calendar"]), {"status", "events", "reason"})
         json.dumps(b)  # serialisable
+
+    def test_daily_context_covers_every_analysed_symbol(self):
+        daily = {"EURUSD=X": series(breakout()), "GBPUSD=X": series(neutral()),
+                 "AUDUSD=X": series(breakout()), "USDJPY=X": series(neutral())}
+        b = briefing.build_briefing(UNIVERSE, daily, [], {}, cal(), TUE)
+        analyses = briefing.analyze_universe(UNIVERSE, daily, TUE)
+        self.assertEqual(set(b["daily_context"]), {a["symbol"] for a in analyses})
+        self.assertEqual(len(b["daily_context"]), 4)
+        # symbols without a rule are covered too
+        self.assertIn("GBPUSD=X", b["daily_context"])
+        self.assertNotIn("GBPUSD=X", [h["symbol"] for h in b["swing"]["hits"]])
+        ref = signals.analyze("EURUSD=X", "EUR/USD", daily["EURUSD=X"], TUE)
+        ctx = b["daily_context"]["EURUSD=X"]
+        self.assertEqual(set(ctx), {"name", "last", "atr_pct", "trend"})
+        self.assertEqual(ctx["name"], "EUR/USD")
+        for k in ("last", "atr_pct", "trend"):
+            self.assertEqual(ctx[k], ref[k])
+        json.dumps(b["daily_context"])
 
     def test_calendar_carries_its_reason(self):
         b = briefing.build_briefing(UNIVERSE, all_breakouts(), [], {},

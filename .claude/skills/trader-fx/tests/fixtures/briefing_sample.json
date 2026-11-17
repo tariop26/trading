@@ -245,6 +245,74 @@
     ],
     "clusters": []
   },
+  "daily_context": {
+    "EURUSD=X": {
+      "name": "EUR/USD",
+      "last": 1.1883144080201757,
+      "atr_pct": 0.4497104079602218,
+      "trend": "up"
+    },
+    "GBPUSD=X": {
+      "name": "GBP/USD",
+      "last": 1.3845417780139238,
+      "atr_pct": 0.44971040796021944,
+      "trend": "up"
+    },
+    "AUDUSD=X": {
+      "name": "AUD/USD",
+      "last": 0.6481953022913343,
+      "atr_pct": 0.3091989854799583,
+      "trend": "down"
+    },
+    "USDCAD=X": {
+      "name": "USD/CAD",
+      "last": 1.3807522654229125,
+      "atr_pct": 0.3091989854799588,
+      "trend": "down"
+    },
+    "NZDUSD=X": {
+      "name": "NZD/USD",
+      "last": 0.5873556574736052,
+      "atr_pct": 0.30919898547995983,
+      "trend": "down"
+    },
+    "USDJPY=X": {
+      "name": "USD/JPY",
+      "last": 150.6997009645019,
+      "atr_pct": 0.30919898547995833,
+      "trend": "down"
+    },
+    "USDCHF=X": {
+      "name": "USD/CHF",
+      "last": 0.8760710355727465,
+      "atr_pct": 0.30919898547995767,
+      "trend": "down"
+    },
+    "GC=F": {
+      "name": "Or",
+      "last": 3982.366636723287,
+      "atr_pct": 0.30919898547995944,
+      "trend": "down"
+    },
+    "CL=F": {
+      "name": "Pétrole WTI",
+      "last": 74.25600000000001,
+      "atr_pct": 0.5672144819466182,
+      "trend": "up"
+    },
+    "^FCHI": {
+      "name": "CAC 40",
+      "last": 8190.740667149755,
+      "atr_pct": 0.4497104079602197,
+      "trend": "up"
+    },
+    "^GDAXI": {
+      "name": "DAX",
+      "last": 21352.866712489336,
+      "atr_pct": 0.44971040796022166,
+      "trend": "up"
+    }
+  },
   "day_plan": {
     "sessions": [
       {

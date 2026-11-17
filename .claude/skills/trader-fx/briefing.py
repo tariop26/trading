@@ -243,6 +243,8 @@ def build_briefing(universe, daily, failed, hourly, calendar, now_utc, extra_war
         "calendar": {"status": status, "events": events, "reason": reason or None},
         "strength": {"windows": windows},
         "swing": {"hits": hits, "clusters": strength.clusters(hits)},
+        "daily_context": {a["symbol"]: {k: a[k] for k in ("name", "last", "atr_pct", "trend")}
+                          for a in analyses},
         "day_plan": {"sessions": table, "levels": levels, "events_24h": events_24h},
         "trade_ideas": trade_ideas,
         "warnings": warnings,
