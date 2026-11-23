@@ -441,6 +441,17 @@ tendance), zones de retournement (plus hauts et bas 5 et 20 séances, extensions
 puis des alertes : bascule franchie, zone approchée à moins d'un quart d'amplitude, SAR retourné
 (au plus 3 par lancement). Ce sont des niveaux à surveiller, pas des setups du plan.
 
+**Setup D, retournement de l'or sur niveau H4 (`gold_reverse.py`)**, activé par `SETUP_D_GOLD=1` et le
+secret `TWELVE_DATA_API_KEY` (un crédit par lancement : barres 1 h de XAU/USD au comptant, l'échelle du
+XAUUSD du courtier). Niveaux : zones de swings H4 touchées au moins deux fois, plus haut et plus bas de
+la veille et de la semaine dernière (jour du serveur MT5, New York + 7 h), chiffres ronds de 50 $ ;
+les niveaux proches sont fusionnés (confluence). Quand le prix arrive à moins d'une demi-ATR H4 d'un
+niveau : plan d'ordre limite au niveau, stop à 0,6 ATR H4 derrière, cible 2R, taille au risque autorisé
+du classeur. Une alerte par niveau et par jour, deux au plus par lancement, aucune dans les 30 minutes
+avant une annonce USD à fort impact. Règles fixées par l'utilisateur le 23 novembre 2026, **non validées
+par un rejeu historique** (le message le dit). Quota Twelve Data gratuit : 800 appels par jour, partagés
+avec `live_gold.py`.
+
 **Univers.** `TRADER_FX_LISTS` (liste de fichiers séparés par des virgules) remplace les trois
 listes par défaut quand `--list` n'est pas donné ; les workflows le fixent à
 `trader/lists/fundednext.txt` (les 6 actifs du plan).

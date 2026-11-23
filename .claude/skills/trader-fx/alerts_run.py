@@ -32,9 +32,11 @@ import config as fxconfig  # noqa: E402
 import data  # noqa: E402
 import economic_calendar  # noqa: E402
 import fx  # noqa: E402
+import gold_reverse  # noqa: E402
 import guard  # noqa: E402
 import intraday_run  # noqa: E402
 import journal  # noqa: E402
+import live_gold  # noqa: E402
 import positions  # noqa: E402
 import reversal  # noqa: E402
 import sessions  # noqa: E402
@@ -47,6 +49,41 @@ WORKERS = 3
 REVERSE_LIST_ENV = "TRADER_FX_REVERSE_LIST"   # list file of the assets with reversal levels
 REVERSE_MAX_PER_RUN = 3                       # live reversal messages per run (plus the morning one)
 MORNING_HOUR_PARIS = 6                        # the morning summary goes from 06:00 Paris
+SETUP_D_ENV = "SETUP_D_GOLD"                  # "1": gold H4 reversal alerts (Twelve Data key needed)
+
+
+def risk_per_trade(params, cfg):
+    """Risk allowed per trade in USD: the sheet's figure, else the configuration's."""
+    if params and params.get("risk_per_trade"):
+        return params["risk_per_trade"]
+    try:
+        return cfg["account"]["capital"] * cfg["risk"]["per_trade_pct"] / 100.0
+    except (KeyError, TypeError):
+        return None
+
+
+def setup_d_items(now, env, fetch_bars, fetch_gold_hourly, state, risk, events):
+    """-> (queue items, log lines) of setup D (gold H4 reversal), never fatal for the caller."""
+    key = env.get("TWELVE_DATA_API_KEY", "").strip()
+    if env.get(SETUP_D_ENV, "").strip() != "1":
+        return [], []
+    if not key:
+        return [], ["setup D : secret TWELVE_DATA_API_KEY absent, sauté"]
+    try:
+        hourly = fetch_gold_hourly(key)
+    except live_gold.FeedError as e:
+        return [], ["setup D : flux or indisponible (%s)" % e]
+    daily, _ = fetch_bars(["GC=F"], *data.DAILY, cache_dir=None, ttl_s=0, use_cache=False,
+                          workers=WORKERS)
+    ts = now.timestamp()
+    trend = None
+    if "GC=F" in daily:
+        trend = reversal.trend(reversal.completed(reversal.clean(daily["GC=F"].bars), ts,
+                                                  reversal.DAY_S))
+    news = alert_checks.news_blocked("GC=F", events, now)
+    found, log = gold_reverse.alerts(hourly, ts, risk, trend, set(state.get("guard_sent", [])),
+                                     now.date().isoformat(), news)
+    return [(text, lambda st, k=k: st["guard_sent"].append(k)) for k, text in found], log
 
 
 def reversal_items(now, env, fetch_bars, state, known_bars):
@@ -205,6 +242,8 @@ def main(argv=None, deps=None):
     brief = deps.get("brief", _default_brief)
     send = deps.get("send", telegram.send_message)
     fetch_positions = deps.get("fetch_positions", positions.fetch_csv)
+    fetch_gold_hourly = deps.get("fetch_gold_hourly",
+                                 lambda key: gold_reverse.fetch_hourly(key, live_gold._http_get))
 
     if args.now:
         try:
@@ -355,6 +394,18 @@ def main(argv=None, deps=None):
     for line in sig_log:
         _say(line)
     queue.extend(sig_items)
+
+    # 5c. setup D, gold H4 reversal on a level (limit order plan), never fatal
+    try:
+        d_events = get_events() if env.get(SETUP_D_ENV, "").strip() == "1" else []
+        d_items, d_log = setup_d_items(now, env, fetch_bars, fetch_gold_hourly, state,
+                                       risk_per_trade(book[1] if book else None, cfg), d_events)
+    except Exception as e:  # noqa: BLE001 - a setup D bug must not silence stops: type only
+        _say("setup D en échec (%s) : sauté." % type(e).__name__)
+        d_items, d_log = [], []
+    for line in d_log:
+        _say(line)
+    queue.extend(d_items)
 
     # 6. sending
     code = 0

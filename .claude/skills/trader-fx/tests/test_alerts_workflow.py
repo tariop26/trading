@@ -45,10 +45,11 @@ class TestAlertsWorkflow(unittest.TestCase):
 
     def test_secrets_are_read_only_through_env_and_never_echoed(self):
         refs = [l for l in self.lines if "secrets." in l]
-        self.assertEqual(len(refs), 4, refs)
+        self.assertEqual(len(refs), 5, refs)
         for line in refs:
             self.assertRegex(line, r"^\s{10}[A-Z_]+: \$\{\{ secrets\.[A-Z_]+ \}\}$")
-        for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TRADER_FX_CONFIG", "POSITIONS_CSV_URL"):
+        for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TRADER_FX_CONFIG", "POSITIONS_CSV_URL",
+                     "TWELVE_DATA_API_KEY"):
             self.assertIn("%s: ${{ secrets.%s }}" % (name, name), self.text)
         self.assertNotIn("echo", self.text)
         self.assertNotIn("set -x", self.text)

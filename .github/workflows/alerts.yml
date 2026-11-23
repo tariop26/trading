@@ -44,6 +44,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TRADER_FX_CONFIG: ${{ secrets.TRADER_FX_CONFIG }}
           POSITIONS_CSV_URL: ${{ secrets.POSITIONS_CSV_URL }}
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          SETUP_D_GOLD: "1"
           TRADER_FX_LISTS: trader/lists/fundednext.txt
           TRADER_FX_REVERSE_LIST: trader/lists/fundednext.txt
           DRY_RUN: ${{ inputs.dry_run }}
