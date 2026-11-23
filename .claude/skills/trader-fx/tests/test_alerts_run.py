@@ -572,3 +572,128 @@ class TestSignals(Harness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SHEET_HEADER = ("Id,Actif,Symbole Yahoo,Sens,Entrée,SL,TP,Lots,\"Valeur 1,00 pour 1 lot ($)\","
+                "Ouverture (Paris),,Paramètre,Valeur")
+# opened 10:00 Paris = 09:00 UTC on 2026-11-16; CFD entry 3547, stop 3498, target 3640
+SHEET_GOLD = 'Ligne 2,XAUUSD,GC=F,haussier,3547,3498,3640,"0,1",100,2026-11-16 10:00,,Solde clos ($),"99302,00"'
+SHEET_PARAMS = ['P&L clos aujourd\'hui ($),"-382,00"', 'Capital initial ($),"100000,00"',
+                'Alerte perte du jour ($),"1000,00"', 'Stop journalier interne ($),"1500,00"',
+                'Perte journalière max FundedNext ($),"5000,00"', 'Plancher perte max ($),"90000,00"',
+                'Risque ouvert max ($),"1500,00"']
+
+
+def sheet_csv(*rows):
+    lines = [SHEET_HEADER] + list(rows) + [",,,,,,,,,,," + p for p in SHEET_PARAMS]
+    return "\n".join(lines) + "\n"
+
+
+def gold_bar(h, m, low, high, close):
+    return (ts(h, m), close, high, low, close)
+
+
+class TestSheetPositions(Harness):
+    """POSITIONS_CSV_URL set: the sheet replaces alerts.json and the guard runs."""
+
+    def setUp(self):
+        super().setUp()
+        self.env["POSITIONS_CSV_URL"] = "https://docs.google.com/private-link"
+        self.csv = sheet_csv(SHEET_GOLD)
+        self.csv_fail = False
+        self.briefing = briefing_doc()
+        # Yahoo GC=F is 20 above the CFD: the 09:00 UTC bar closes at 3567
+        self.bars = {"GC=F": [gold_bar(9, 0, 3560, 3570, 3567), gold_bar(10, 5, 3550, 3560, 3555)]}
+
+    def deps(self, now=NOW):
+        d = super().deps(now)
+
+        def fetch_positions(url):
+            self.calls.append(("csv",))
+            if self.csv_fail:
+                raise alerts_run.positions.PositionsError("réseau (URLError)")
+            return self.csv
+        d["fetch_positions"] = fetch_positions
+        return d
+
+    def test_quiet_position_sends_nothing_and_ignores_alerts_json(self):
+        self.write_alerts(rules_doc(rule("stop", 1.095)))
+        self.assertEqual(self.run_main(), 0, self.output)
+        self.assertEqual(self.sent, [])
+        self.assertNotIn("EURUSD=X", str([c for c in self.calls if c[0] == "bars"]))
+        self.assertIn(("bars", ("GC=F",), "5m", "5d"), self.calls)
+        self.assertIn("garde-fou : 1 position(s)", self.output)
+
+    def test_stop_level_is_moved_by_the_cfd_gap(self):
+        # CFD stop 3498 + gap 20 = 3518 on Yahoo: a low of 3519 is not a touch, 3517 is
+        self.bars["GC=F"].append(gold_bar(11, 0, 3519, 3530, 3525))
+        self.run_main()
+        self.assertFalse(any(t.startswith("Stop touché") for t in self.sent))
+        self.bars["GC=F"].append(gold_bar(11, 5, 3517, 3525, 3520))
+        self.sent.clear()
+        self.run_main()
+        stops = [t for t in self.sent if t.startswith("Stop touché")]
+        self.assertEqual(len(stops), 1, self.sent)
+        self.assertIn("trade XAUUSD ouvert le 16/11 10:00", stops[0])
+
+    def test_guard_message_goes_first_and_once_a_day(self):
+        # Yahoo 3497 = CFD 3477: -700 floating, -1 082 for the day
+        self.bars["GC=F"].append(gold_bar(11, 0, 3496, 3530, 3497))
+        self.assertEqual(self.run_main(), 0, self.output)
+        self.assertTrue(self.sent[0].startswith("Garde-fou FundedNext. Seuil d'alerte franchi"), self.sent)
+        self.assertIn("guard|alerte|%s" % TODAY, self.saved_state()["guard_sent"])
+        self.sent.clear()
+        self.run_main()
+        self.assertFalse(any(t.startswith("Garde-fou") for t in self.sent))
+
+    def test_unreadable_sheet_falls_back_to_alerts_json_and_says_it_once(self):
+        self.csv_fail = True
+        self.write_alerts(rules_doc(rule("stop", 1.095)))
+        self.bars["EURUSD=X"] = [bar(10, 5, 1.094, 1.1)]
+        self.assertEqual(self.run_main(), 0, self.output)
+        self.assertTrue(self.sent[0].startswith("Garde-fou FundedNext inactif"), self.sent)
+        self.assertTrue(any(t.startswith("Stop touché : EUR/USD") for t in self.sent))
+        self.assertNotIn("private-link", self.output)
+        self.sent.clear()
+        self.run_main()
+        self.assertFalse(any(t.startswith("Garde-fou") for t in self.sent))
+
+    def test_empty_sheet_means_no_bars(self):
+        self.csv = sheet_csv()
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual([c for c in self.calls if c[0] == "bars" and c[2] == "5m"], [])
+        self.assertEqual(self.sent, [])
+
+
+class TestReversal(Harness):
+    def setUp(self):
+        super().setUp()
+        lst = os.path.join(self.dir, "fundednext.txt")
+        with open(lst, "w", encoding="utf-8") as f:
+            f.write("# liste\n^NDX|Nasdaq 100 (NAS100)\n")
+        self.env["TRADER_FX_REVERSE_LIST"] = lst
+        start = int(NOW.timestamp()) - 70 * 86400
+        closes = [30000 - i * 50 for i in range(60)]
+        self.bars = {"^NDX": [(start + i * 86400, c, c + 100, c - 100, c) for i, c in enumerate(closes)]}
+        self.briefing = briefing_doc()
+        self.write_alerts(rules_doc())
+
+    def test_morning_summary_once_a_day(self):
+        self.assertEqual(self.run_main(), 0, self.output)
+        morning = [t for t in self.sent if t.startswith("Niveaux de reverse du jour")]
+        self.assertEqual(len(morning), 1, self.sent)
+        self.assertIn("Nasdaq 100 (NAS100) : tendance D1 baissière", morning[0])
+        self.assertIsNone(FORBIDDEN.search(morning[0]))
+        self.sent.clear()
+        self.run_main()
+        self.assertFalse(any(t.startswith("Niveaux de reverse du jour") for t in self.sent))
+
+    def test_not_before_six_in_paris(self):
+        early = datetime(2026, 11, 16, 4, 30, tzinfo=timezone.utc)      # 05:30 Paris
+        self.run_main(now=early)
+        self.assertFalse(any(t.startswith("Niveaux de reverse du jour") for t in self.sent))
+
+    def test_no_list_no_extra_calls(self):
+        del self.env["TRADER_FX_REVERSE_LIST"]
+        self.run_main()
+        self.assertFalse(any(c[0] == "bars" and c[2] == "1d" for c in self.calls))

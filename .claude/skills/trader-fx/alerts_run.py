@@ -4,7 +4,9 @@
     python3 .claude/skills/trader-fx/alerts_run.py [--dry-run] [--state PATH] [--alerts PATH]
         [--config PATH] [--now "YYYY-MM-DD HH:MM"]
 
-A run: reads trader/fx/alerts.json, checks the stop and target of the open trades on 5-minute
+A run: reads the open positions (the published "Positions ouvertes" tab of the sheet when the
+POSITIONS_CSV_URL secret is set, else trader/fx/alerts.json), runs the FundedNext risk guard (day
+loss and account floor, see guard.py), checks the stop and target of the open trades on 5-minute
 bars, looks at the coming high-impact announcements, reruns the briefing for new ideas, and sends
 what is new to Telegram. A message is remembered (state file) only once Telegram answered 200.
 Standard library only. Exit code 0, or 1 when a send failed, a secret is missing or invalid.
@@ -25,18 +27,75 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import alert_checks  # noqa: E402
 import alert_messages  # noqa: E402
 import alert_state  # noqa: E402
+import briefing as fxbriefing  # noqa: E402
 import config as fxconfig  # noqa: E402
 import data  # noqa: E402
 import economic_calendar  # noqa: E402
 import fx  # noqa: E402
+import guard  # noqa: E402
 import intraday_run  # noqa: E402
 import journal  # noqa: E402
+import positions  # noqa: E402
+import reversal  # noqa: E402
+import sessions  # noqa: E402
 import telegram  # noqa: E402
 
 DEFAULT_STATE = "trader/fx/alerts_state.json"
 DEFAULT_ALERTS = "trader/fx/alerts.json"
 DEFAULT_CONFIG = "trader/fx/config.json"
 WORKERS = 3
+REVERSE_LIST_ENV = "TRADER_FX_REVERSE_LIST"   # list file of the assets with reversal levels
+REVERSE_MAX_PER_RUN = 3                       # live reversal messages per run (plus the morning one)
+MORNING_HOUR_PARIS = 6                        # the morning summary goes from 06:00 Paris
+
+
+def reversal_items(now, env, fetch_bars, state, known_bars):
+    """-> (queue items, log lines) for the reversal levels of the listed assets.
+
+    The morning summary goes once a day, from MORNING_HOUR_PARIS; live alerts (flip level crossed,
+    zone approached, SAR turned) go once each, at most REVERSE_MAX_PER_RUN per run."""
+    path = env.get(REVERSE_LIST_ENV, "").strip()
+    if not path:
+        return [], []
+    try:
+        items = fxbriefing.read_list(path)
+    except (OSError, ValueError):
+        return [], ["liste des niveaux de reverse illisible : %s" % path]
+    syms = [s for s, _ in items]
+    if not syms:
+        return [], []
+    kw = dict(cache_dir=None, ttl_s=0, use_cache=False, workers=WORKERS)
+    daily, _ = fetch_bars(syms, *data.DAILY, **kw)
+    hourly, _ = fetch_bars(syms, "1h", "1mo", **kw)
+    missing = [s for s in syms if s not in known_bars]
+    recent = dict(known_bars)
+    if missing:
+        series, _ = fetch_bars(missing, *data.INTRADAY, **kw)
+        recent.update(_bars_by_symbol(series))
+    ts = now.timestamp()
+    sent = set(state.get("guard_sent", []))
+    day = now.date().isoformat()
+    rows, live, log = [], [], []
+    for sym, name in items:
+        if sym not in daily:
+            rows.append((name, None))
+            log.append("niveaux de reverse : pas de barres journalières pour %s" % sym)
+            continue
+        lv = reversal.levels(daily[sym].bars, hourly[sym].bars if sym in hourly else [], ts)
+        rows.append((name, lv))
+        price = positions.last_price(recent.get(sym))[0]
+        live += [(k, t) for k, t in reversal.live_alerts(sym, name, lv, price, day) if k not in sent]
+    queue = []
+    morning_key = "reverse|resume|%s" % day
+    if morning_key not in sent and now.astimezone(sessions.PARIS).hour >= MORNING_HOUR_PARIS:
+        queue.append((reversal.morning_message(rows),
+                      lambda st, k=morning_key: st["guard_sent"].append(k)))
+    for k, text in live[:REVERSE_MAX_PER_RUN]:
+        queue.append((text, lambda st, k=k: st["guard_sent"].append(k)))
+    if len(live) > REVERSE_MAX_PER_RUN:
+        log.append("niveaux de reverse : %d alerte(s) reportée(s) au lancement suivant"
+                   % (len(live) - REVERSE_MAX_PER_RUN))
+    return queue, log
 
 
 def _say(line):
@@ -145,6 +204,7 @@ def main(argv=None, deps=None):
     fetch_calendar = deps.get("fetch_calendar", economic_calendar.fetch_calendar)
     brief = deps.get("brief", _default_brief)
     send = deps.get("send", telegram.send_message)
+    fetch_positions = deps.get("fetch_positions", positions.fetch_csv)
 
     if args.now:
         try:
@@ -176,19 +236,57 @@ def main(argv=None, deps=None):
     # 2. state and rules
     state = alert_state.load_state(args.state, today)
     before = copy.deepcopy(state)
-    rules, updated = _read_alerts(args.alerts)
-    rules = [r for r in rules or [] if isinstance(r, dict)] if rules is not None else None
-    have_rules = bool(rules)
-
     queue = []                                   # (text, mark(state)), in sending order
+
+    # 2a. the sheet, when its tab is published: the source of the open positions
+    book, pos_bars, offsets = None, {}, {}
+    csv_url = env.get("POSITIONS_CSV_URL", "").strip()
+    if csv_url:
+        try:
+            plist, params, problems = positions.parse_csv(fetch_positions(csv_url))
+            for line in problems:
+                _say("classeur : " + line)
+            book = (plist, params)
+        except positions.PositionsError as e:
+            _say("classeur illisible (%s) : alerts.json utilisé, garde-fou sauté." % e)
+            down_key = guard.key("classeur", today)
+            if down_key not in state["guard_sent"]:
+                queue.append((guard.csv_down_message(),
+                              lambda st, k=down_key: st["guard_sent"].append(k)))
+    if book is not None:
+        plist, params = book
+        symbols = sorted({p["symbol"] for p in plist})
+        if symbols:
+            series, _failed = fetch_bars(symbols, *data.INTRADAY, cache_dir=None, ttl_s=0,
+                                         use_cache=False, workers=WORKERS)
+            pos_bars = _bars_by_symbol(series)
+        for p in plist:
+            offsets[p["id"]] = positions.entry_offset(p, pos_bars.get(p["symbol"]))
+            if offsets[p["id"]] is None:
+                _say("écart CFD non mesuré pour %s %s : niveaux CFD utilisés tels quels."
+                     % (p["asset"], p["id"]))
+        rules, updated = positions.to_rules(plist, offsets), None
+        # 2b. the FundedNext risk guard, sent first: it is the most urgent
+        prices = {sym: positions.last_price(b)[0] for sym, b in pos_bars.items()}
+        guard_msgs, summary = guard.evaluate(plist, params, prices, offsets, state, today)
+        _say(summary)
+        for text, keys in guard_msgs:
+            queue.append((text, lambda st, ks=keys: st["guard_sent"].extend(ks)))
+    else:
+        rules, updated = _read_alerts(args.alerts)
+        rules = [r for r in rules or [] if isinstance(r, dict)] if rules is not None else None
+    have_rules = bool(rules)
 
     # 3. stops and targets
     hits, down = [], False
     if have_rules:
-        symbols = sorted({r["symbol"] for r in rules if isinstance(r.get("symbol"), str)})
-        series, _failed = fetch_bars(symbols, *data.INTRADAY, cache_dir=None, ttl_s=0,
-                                     use_cache=False, workers=WORKERS)
-        bars = _bars_by_symbol(series)
+        if book is not None:
+            bars = pos_bars
+        else:
+            symbols = sorted({r["symbol"] for r in rules if isinstance(r.get("symbol"), str)})
+            series, _failed = fetch_bars(symbols, *data.INTRADAY, cache_dir=None, ttl_s=0,
+                                         use_cache=False, workers=WORKERS)
+            bars = _bars_by_symbol(series)
         hits, log = alert_checks.touched_rules(rules, bars, state, updated)
         for line in log:
             _say(line)
@@ -227,6 +325,16 @@ def main(argv=None, deps=None):
             text = alert_messages.idea_message(idea, account, waiting if n == len(ideas) - 1 else 0)
             queue.append((text, lambda st, key=alert_checks.idea_key(idea, today):
                           st["ideas_sent"].append(key)))
+
+    # 5a. reversal levels (morning summary and live alerts), never fatal
+    try:
+        rev_items, rev_log = reversal_items(now, env, fetch_bars, state, pos_bars)
+    except Exception as e:  # noqa: BLE001 - a reversal bug must not silence stops: type only
+        _say("niveaux de reverse en échec (%s) : sautés." % type(e).__name__)
+        rev_items, rev_log = [], []
+    for line in rev_log:
+        _say(line)
+    queue.extend(rev_items)
 
     # 5b. intraday signals (the calendar is read only if a candidate needs it, once)
     calendar_cache = []

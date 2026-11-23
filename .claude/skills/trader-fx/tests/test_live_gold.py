@@ -228,7 +228,8 @@ class TestWorkflow(unittest.TestCase):
 
     def test_secrets_only_through_env_and_never_echoed(self):
         refs = [l for l in self.text.splitlines() if "secrets." in l]
-        self.assertEqual(len(refs), 3, refs)
+        self.assertEqual(len(refs), 4, refs)
+        self.assertIn("POSITIONS_CSV_URL: ${{ secrets.POSITIONS_CSV_URL }}", self.text)
         for line in refs:
             self.assertRegex(line, r"^\s{10}[A-Z_]+: \$\{\{ secrets\.[A-Z_]+ \}\}$")
         self.assertNotIn("echo", self.text)
@@ -246,3 +247,33 @@ class TestWorkflow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSheetRules(unittest.TestCase):
+    HEADER = ("Id,Actif,Symbole Yahoo,Sens,Entrée,SL,TP,Lots,\"Valeur 1,00 pour 1 lot ($)\","
+              "Ouverture (Paris),,Paramètre,Valeur")
+
+    def csv(self):
+        return "\n".join([self.HEADER,
+                          'Ligne 2,XAUUSD,GC=F,haussier,3547,3498,3640,"0,1",100,2026-11-23 09:00',
+                          'Ligne 3,GER40,^GDAXI,haussier,24888,24600,25240,"0,1",11,2026-11-23 09:05']) + "\n"
+
+    def test_gold_rules_come_from_the_sheet_with_cfd_levels(self):
+        rules, updated = live_gold.load_rules("missing.json", None, http_get=lambda url, **kw: self.csv(),
+                                              csv_url="https://docs.google.com/x")
+        self.assertIsNone(updated)
+        self.assertEqual([(r["symbol"], r["type"], r["level"]) for r in rules],
+                         [("GC=F", "stop", 3498.0), ("GC=F", "cible", 3640.0)])
+
+    def test_unreadable_sheet_falls_back_to_the_file(self):
+        folder = tempfile.mkdtemp()
+        atexit.register(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "alerts.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"v": 1, "updated": SINCE, "rules": [rule()]}, f)
+
+        def boom(url, **kw):
+            raise OSError("down")
+        rules, updated = live_gold.load_rules(path, None, http_get=boom, csv_url="https://x")
+        self.assertEqual(rules, [rule()])
+        self.assertEqual(updated, SINCE)
