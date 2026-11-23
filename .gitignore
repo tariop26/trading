@@ -15,3 +15,6 @@ trader/fx/journal.json
 
 # Relevés de positions MQL5 (données tierces, ne pas committer)
 *.positions.csv
+
+# Relevé de positions d'un tiers (Myxbook), ne pas publier
+LMB_XAUUSD.csv
