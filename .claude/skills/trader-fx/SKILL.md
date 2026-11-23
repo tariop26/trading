@@ -409,6 +409,47 @@ chez le courtier » : le stop réel reste chez le courtier. Le calendrier est un
 officiel. GitHub peut retarder un lancement planifié ; rien ne prévient si le
 planificateur s'arrête. Les idées en séance viennent d'une barre du jour en formation.
 
+## Garde-fou FundedNext et niveaux de reverse
+
+Ajoutés le 23 novembre 2026 pour le challenge FundedNext Stellar 2-Step 100k. Tout est calculé en
+Python dans `alerts_run.py`, sans appel à Claude, et rien n'est jamais envoyé au courtier.
+
+**Source des positions : le classeur.** Quand le secret `POSITIONS_CSV_URL` existe (lien CSV de
+l'onglet « Positions ouvertes » du classeur Google Sheets, publié sur le Web), `positions.py` lit
+les positions ouvertes et les chiffres du compte (solde clos, résultat clos du jour, seuils du
+plan) et remplace `alerts.json`. Classeur illisible : `alerts.json` reprend la main et un message
+par jour le dit. Le lien CSV est privé : il n'est jamais affiché. `live_gold.py` lit aussi le
+classeur (niveaux CFD tels quels : Twelve Data cote l'or au comptant).
+
+**Écart CFD.** Les prix Yahoo (futures pour l'or et les indices US, indice au comptant pour le DAX
+et le CAC) ne sont pas ceux du CFD. L'écart est mesuré à l'heure d'ouverture (clôture de la barre
+5 min qui contient l'ouverture, moins l'entrée CFD) ; les niveaux de stop et de cible et le
+résultat latent en sont corrigés. Heure d'ouverture fausse ou écart de plus de 3 % : pas de
+correction, une ligne le dit dans le journal du lancement.
+
+**Garde-fou (`guard.py`)**, un message par seuil et par jour UTC, envoyé avant tout le reste :
+résultat du jour estimé (clos du jour + latent) sous l'alerte (1 000 $), sous le stop interne
+(1 500 $), sous 70 % de la perte journalière FundedNext (5 000 $) ; équité estimée à moins de 20 %
+de la marge au-dessus du plancher (90 000 $) ; risque ouvert aux stops au-dessus du plafond
+(1 500 $). Les seuils viennent du classeur. Un saut qui franchit plusieurs seuils n'envoie que le
+plus grave. Estimation sur prix retardés : l'équité exacte est dans MT5.
+
+**Niveaux de reverse (`reversal.py`)** pour les actifs de `TRADER_FX_REVERSE_LIST`
+(`trader/lists/fundednext.txt`) : bascule de tendance D1 (dernier swing fractal contre la
+tendance), zones de retournement (plus hauts et bas 5 et 20 séances, extensions moyenne 20 j
+± 3 amplitudes), Parabolic SAR D1 et H4 (0,02 ; 0,2). Un résumé par jour à partir de 06 h Paris,
+puis des alertes : bascule franchie, zone approchée à moins d'un quart d'amplitude, SAR retourné
+(au plus 3 par lancement). Ce sont des niveaux à surveiller, pas des setups du plan.
+
+**Univers.** `TRADER_FX_LISTS` (liste de fichiers séparés par des virgules) remplace les trois
+listes par défaut quand `--list` n'est pas donné ; les workflows le fixent à
+`trader/lists/fundednext.txt` (les 6 actifs du plan).
+
+**Lancements fiables.** GitHub abandonne la plupart des lancements planifiés d'un petit dépôt
+(constaté : 2 lancements par jour au lieu de 60, un briefing parti 9 h en retard). Le déclencheur
+fiable est un minuteur externe (cron-job.org) qui appelle l'API `workflow_dispatch` ; les crons
+restent en secours.
+
 ## Signaux en séance
 
 Le serveur d'alertes détecte aussi des trades pendant la séance, sur des barres de

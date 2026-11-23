@@ -1031,6 +1031,14 @@ class TestMain(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(text.strip().splitlines()), 1)
 
+    def test_lists_from_the_environment_when_no_list_option(self):
+        rec = Recorder(all_breakouts())
+        missing = os.path.join(self.tmp.name, "from-env.txt")
+        with mock.patch.dict(os.environ, {fx.LISTS_ENV: missing}):
+            code, text = run_main(["brief", "--out", self.out], rec.deps())
+        self.assertEqual(code, 1)
+        self.assertIn("from-env.txt", text)
+
     def test_list_in_cp1252_returns_1_with_one_line(self):
         bad = os.path.join(self.tmp.name, "cp.txt")
         with open(bad, "wb") as f:

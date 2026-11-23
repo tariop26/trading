@@ -30,6 +30,7 @@ import page  # noqa: E402
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_LISTS = ("trader/lists/fx_pairs.txt", "trader/lists/commodities.txt",
                  "trader/lists/indices.txt")
+LISTS_ENV = "TRADER_FX_LISTS"   # comma-separated list files, used when --list is not given
 DEFAULT_OUT = "trader/fx/briefing.json"
 DEFAULT_CONFIG = "trader/fx/config.json"
 DEFAULT_PAGE = "trader/fx/briefing.html"
@@ -92,7 +93,8 @@ def cmd_brief(args, deps):
         return _fail(str(e))
 
     universe, seen = [], set()
-    for path in args.lists or DEFAULT_LISTS:
+    env_lists = [p.strip() for p in os.environ.get(LISTS_ENV, "").split(",") if p.strip()]
+    for path in args.lists or env_lists or DEFAULT_LISTS:
         try:
             items = briefing.read_list(path)
         except (OSError, ValueError) as e:  # ValueError: UnicodeDecodeError

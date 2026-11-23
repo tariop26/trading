@@ -16,7 +16,8 @@ def full_state(**kw):
     state = {"v": 1, "day": TODAY, "ideas_sent": ["EURJPY=X|baissier|2026-11-16"],
              "rules_fired": ["2026-11-16-EURJPY-1-stop"], "events_sent": ["2026-11-16T13:30:00+00:00|USD|CPI"],
              "down_notified_day": TODAY,
-             "signals_sent": [SENT], "signals_count": 1, "signals_cap_day": TODAY}
+             "signals_sent": [SENT], "signals_count": 1, "signals_cap_day": TODAY,
+             "guard_sent": ["guard|alerte|2026-11-16"]}
     state.update(kw)
     return state
 
@@ -24,7 +25,7 @@ def full_state(**kw):
 def old_state(**kw):
     """A state saved before the signal keys existed."""
     state = full_state()
-    for k in ("signals_sent", "signals_count", "signals_cap_day"):
+    for k in ("signals_sent", "signals_count", "signals_cap_day", "guard_sent"):
         del state[k]
     state.update(kw)
     return state
@@ -53,7 +54,8 @@ class TestLoad(unittest.TestCase):
         self.assertEqual(alert_state.empty_state(TODAY),
                          {"v": 1, "day": TODAY, "ideas_sent": [], "rules_fired": [],
                           "events_sent": [], "down_notified_day": None,
-                          "signals_sent": [], "signals_count": 0, "signals_cap_day": None})
+                          "signals_sent": [], "signals_count": 0, "signals_cap_day": None,
+                          "guard_sent": []})
 
     def test_missing_corrupt_and_other_version_give_an_empty_state(self):
         empty = alert_state.empty_state(TODAY)
@@ -78,12 +80,14 @@ class TestLoad(unittest.TestCase):
         self.write(json.dumps(full_state()))
         got = alert_state.load_state(self.path, "2026-11-17")
         self.assertEqual(got, full_state(day="2026-11-17", ideas_sent=[], down_notified_day=None,
-                                         signals_sent=[], signals_count=0, signals_cap_day=None))
+                                         signals_sent=[], signals_count=0, signals_cap_day=None,
+                                         guard_sent=[]))
 
     def test_old_state_without_signal_keys_loads_with_defaults(self):
         self.write(json.dumps(old_state()))
         got = alert_state.load_state(self.path, TODAY)
-        self.assertEqual(got, full_state(signals_sent=[], signals_count=0, signals_cap_day=None))
+        self.assertEqual(got, full_state(signals_sent=[], signals_count=0, signals_cap_day=None,
+                                         guard_sent=[]))
 
     def test_signal_keys_reset_on_new_day(self):
         self.write(json.dumps(full_state()))
@@ -95,6 +99,12 @@ class TestLoad(unittest.TestCase):
         for bad in (dict(signals_sent="oops"), dict(signals_sent=[1, 2]), dict(signals_sent=None),
                     dict(signals_count="3"), dict(signals_count=True), dict(signals_count=-1),
                     dict(signals_count=1.5), dict(signals_cap_day=5), dict(signals_cap_day=[])):
+            self.write(json.dumps(full_state(**bad)))
+            self.assertEqual(alert_state.load_state(self.path, TODAY), empty, bad)
+
+    def test_wrong_type_guard_key_gives_empty_state(self):
+        empty = alert_state.empty_state(TODAY)
+        for bad in (dict(guard_sent="oops"), dict(guard_sent=[1]), dict(guard_sent=None)):
             self.write(json.dumps(full_state(**bad)))
             self.assertEqual(alert_state.load_state(self.path, TODAY), empty, bad)
 

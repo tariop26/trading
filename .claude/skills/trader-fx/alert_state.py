@@ -10,8 +10,9 @@ dictionary except `load_state` and `save_state`.
 
 `signals_sent` holds one string per intraday-signal alert,
 "SYMBOLE|sens|barre_iso|score|envoi_iso|fam1+fam2"; `signals_count` is the number of signal alerts
-marked today; `signals_cap_day` is the day the "plafond atteint" notice went out. The three signal
-keys are optional when loading (a state saved before they existed still loads).
+marked today; `signals_cap_day` is the day the "plafond atteint" notice went out. `guard_sent` holds
+the keys of the FundedNext risk-guard messages sent today ("guard|kind|day"). The signal keys and
+`guard_sent` are optional when loading (a state saved before they existed still loads).
 """
 import copy
 import json
@@ -26,7 +27,8 @@ LIST_KEYS = ("ideas_sent", "rules_fired", "events_sent")
 def empty_state(day):
     return {"v": STATE_VERSION, "day": day, "ideas_sent": [], "rules_fired": [],
             "events_sent": [], "down_notified_day": None,
-            "signals_sent": [], "signals_count": 0, "signals_cap_day": None}
+            "signals_sent": [], "signals_count": 0, "signals_cap_day": None,
+            "guard_sent": []}
 
 
 def _valid(doc):
@@ -38,6 +40,9 @@ def _valid(doc):
         return False
     if "signals_sent" in doc and not (isinstance(doc["signals_sent"], list)
                                       and all(isinstance(x, str) for x in doc["signals_sent"])):
+        return False
+    if "guard_sent" in doc and not (isinstance(doc["guard_sent"], list)
+                                    and all(isinstance(x, str) for x in doc["guard_sent"])):
         return False
     if "signals_count" in doc:
         n = doc["signals_count"]
@@ -65,9 +70,10 @@ def load_state(path, today):
     state.setdefault("signals_sent", [])
     state.setdefault("signals_count", 0)
     state.setdefault("signals_cap_day", None)
+    state.setdefault("guard_sent", [])
     if state["day"] != today:
         state.update(day=today, ideas_sent=[], down_notified_day=None,
-                     signals_sent=[], signals_count=0, signals_cap_day=None)
+                     signals_sent=[], signals_count=0, signals_cap_day=None, guard_sent=[])
     return state
 
 

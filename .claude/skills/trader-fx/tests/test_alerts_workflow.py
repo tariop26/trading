@@ -23,7 +23,7 @@ class TestAlertsWorkflow(unittest.TestCase):
 
     def test_schedule_is_every_15_minutes_in_session_on_weekdays_utc(self):
         crons = re.findall(r'^\s*- cron: "([^"]+)"\s*$', self.text, re.M)
-        self.assertEqual(crons, ["7,22,37,52 7-21 * * 1-5"])
+        self.assertEqual(crons, ["7,22,37,52 5-21 * * 1-5"])
 
     def test_manual_run_has_a_boolean_dry_run_input(self):
         self.assertRegex(self.text, r"(?m)^  workflow_dispatch:\n    inputs:\n      dry_run:")
@@ -45,10 +45,10 @@ class TestAlertsWorkflow(unittest.TestCase):
 
     def test_secrets_are_read_only_through_env_and_never_echoed(self):
         refs = [l for l in self.lines if "secrets." in l]
-        self.assertEqual(len(refs), 3, refs)
+        self.assertEqual(len(refs), 4, refs)
         for line in refs:
             self.assertRegex(line, r"^\s{10}[A-Z_]+: \$\{\{ secrets\.[A-Z_]+ \}\}$")
-        for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TRADER_FX_CONFIG"):
+        for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TRADER_FX_CONFIG", "POSITIONS_CSV_URL"):
             self.assertIn("%s: ${{ secrets.%s }}" % (name, name), self.text)
         self.assertNotIn("echo", self.text)
         self.assertNotIn("set -x", self.text)

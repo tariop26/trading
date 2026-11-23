@@ -5,7 +5,8 @@
         [--state PATH] [--alerts PATH] [--raw-url URL]
 
 Prix : Twelve Data, offre gratuite (XAU/USD, retard mesuré d'environ 2 min), au lieu de Yahoo
-(9 à 15 min). Les règles viennent de trader/fx/alerts.json (relu à chaque tour depuis GitHub, sinon
+(9 à 15 min). Les règles viennent de l'onglet Positions ouvertes du classeur quand le secret
+POSITIONS_CSV_URL existe, sinon de trader/fx/alerts.json (relu à chaque tour depuis GitHub, sinon
 depuis le fichier local). Seules les règles dont le symbole est l'or sont suivies ; sans règle, aucun
 appel n'est fait (le quota gratuit est de 800 appels par jour). Les messages partent sur Telegram.
 Le suivi à 15 minutes (alerts_run.py) reste actif : en cas de panne du flux il prend le relais, et
@@ -30,6 +31,7 @@ import alert_checks  # noqa: E402
 import alert_messages  # noqa: E402
 import alert_state  # noqa: E402
 import journal  # noqa: E402
+import positions  # noqa: E402
 import telegram  # noqa: E402
 
 # Symbole des règles (Yahoo) -> symbole Twelve Data.
@@ -113,8 +115,26 @@ def parse_alerts(text):
     return [r for r in doc["rules"] if isinstance(r, dict)], doc.get("updated")
 
 
-def load_rules(path, raw_url, http_get=_http_get):
-    """Les règles les plus récentes : GitHub (raw) d'abord, puis le fichier de l'extraction."""
+def rules_from_sheet(csv_url, http_get=_http_get):
+    """Les règles or du classeur (onglet Positions ouvertes publié), ou None si illisible.
+
+    Twelve Data donne le prix au comptant XAU/USD, celui du CFD à quelques centimes près : les
+    niveaux CFD sont pris tels quels, sans correction d'écart (au contraire des futures Yahoo)."""
+    try:
+        plist, _params, _problems = positions.parse_csv(positions.fetch_csv(csv_url, http_get))
+    except positions.PositionsError as e:
+        _say("classeur illisible (%s) : alerts.json utilisé." % e)
+        return None
+    return positions.to_rules([p for p in plist if p["symbol"] in SYMBOL_MAP], {})
+
+
+def load_rules(path, raw_url, http_get=_http_get, csv_url=None):
+    """Les règles les plus récentes : le classeur s'il est publié, sinon GitHub (raw), puis le
+    fichier de l'extraction."""
+    if csv_url:
+        rules = rules_from_sheet(csv_url, http_get)
+        if rules is not None:
+            return rules, None
     if raw_url:
         try:
             rules, updated = parse_alerts(http_get(raw_url, timeout=10))
@@ -167,7 +187,9 @@ def main(argv=None, deps=None):
     now = deps.get("now", lambda: datetime.now(timezone.utc))
     sleep = deps.get("sleep", time.sleep)
     get_bars = deps.get("fetch_bars", fetch_bars)
-    get_rules = deps.get("load_rules", load_rules)
+    csv_url = env.get("POSITIONS_CSV_URL", "").strip() or None
+    get_rules = deps.get("load_rules",
+                         lambda path, raw: load_rules(path, raw, csv_url=csv_url))
     send = deps.get("send", telegram.send_message)
 
     key = env.get("TWELVE_DATA_API_KEY", "").strip()

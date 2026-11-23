@@ -1,0 +1,7 @@
+# Challenge FundedNext : les 6 actifs du plan de trading (symboles Yahoo de référence des CFD).
+GC=F|Or (XAUUSD)
+^DJI|Dow Jones (US30)
+^NDX|Nasdaq 100 (NAS100)
+^GSPC|S&P 500 (SPX500)
+^GDAXI|DAX 40 (GER40)
+^FCHI|CAC 40 (FRA40)
