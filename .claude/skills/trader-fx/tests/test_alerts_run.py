@@ -697,3 +697,53 @@ class TestReversal(Harness):
         del self.env["TRADER_FX_REVERSE_LIST"]
         self.run_main()
         self.assertFalse(any(c[0] == "bars" and c[2] == "1d" for c in self.calls))
+
+
+class TestSetupD(Harness):
+    def setUp(self):
+        super().setUp()
+        import math
+        start = int(NOW.timestamp()) - 468 * 3600
+        self.hourly = []
+        for i in range(468):
+            c = 3550.0 + 48.0 * math.sin(2 * math.pi * i / 48)
+            self.hourly.append((start + i * 3600, c, c + 2.0, c - 2.0, c))
+        self.env.update({"SETUP_D_GOLD": "1", "TWELVE_DATA_API_KEY": "td-SECRET"})
+        self.briefing = briefing_doc()
+        self.write_alerts(rules_doc())
+        self.td_fail = False
+
+    def deps(self, now=NOW):
+        d = super().deps(now)
+
+        def fetch_gold_hourly(key):
+            self.calls.append(("td", key == "td-SECRET"))
+            if self.td_fail:
+                raise alerts_run.live_gold.FeedError("réseau (URLError)")
+            return self.hourly
+        d["fetch_gold_hourly"] = fetch_gold_hourly
+        return d
+
+    def test_a_setup_d_alert_is_sent_once(self):
+        self.assertEqual(self.run_main(), 0, self.output)
+        d = [t for t in self.sent if t.startswith("Setup D, or H4")]
+        self.assertTrue(d, (self.sent, self.output))
+        self.assertIn(("td", True), self.calls)
+        self.assertNotIn("td-SECRET", self.output)
+        self.sent.clear()
+        self.run_main()
+        self.assertFalse(any(t.startswith("Setup D") for t in self.sent))
+
+    def test_off_without_the_flag_or_the_key(self):
+        del self.env["SETUP_D_GOLD"]
+        self.run_main()
+        self.assertNotIn("td", [c[0] for c in self.calls])
+        self.env["SETUP_D_GOLD"] = "1"
+        del self.env["TWELVE_DATA_API_KEY"]
+        self.run_main()
+        self.assertIn("TWELVE_DATA_API_KEY absent", self.output)
+
+    def test_feed_down_is_not_fatal(self):
+        self.td_fail = True
+        self.assertEqual(self.run_main(), 0)
+        self.assertIn("flux or indisponible", self.output)

@@ -37,6 +37,7 @@ PARAMS = {
     "Perte journalière max FundedNext ($)": "fn_daily",
     "Plancher perte max ($)": "floor",
     "Risque ouvert max ($)": "open_risk_max",
+    "Risque autorisé par trade ($)": "risk_per_trade",
 }
 
 
