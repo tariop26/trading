@@ -124,9 +124,9 @@ def touch_message(hit):
         "%s touché%s : %s %s, trade %s." % (
             "Stop" if rule["type"] == "stop" else "Cible", "" if rule["type"] == "stop" else "e",
             pair_label(sym), rule["side"], rule["trade_id"]),
-        "Niveau %s franchi à %s (%s de la barre 5 min : %s)." % (
+        "Niveau %s franchi à %s (%s de la %s : %s)." % (
             _price(sym, dec, rule["level"]), when, hit["extreme_kind"],
-            _price(sym, dec, hit["extreme"])),
+            hit.get("bar_label", "barre 5 min"), _price(sym, dec, hit["extreme"])),
         "Vérifiez la position chez le courtier."])
 
 

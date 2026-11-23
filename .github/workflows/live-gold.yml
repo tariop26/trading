@@ -1,0 +1,56 @@
+# Fast gold watch: stops and targets of the gold trades checked every ~75 s on 1-minute bars (Twelve Data free plan).
+# Starts every hour at :03 from 07:03 to 21:03 UTC, Monday to Friday (GitHub cron is UTC), and loops for 59 minutes;
+# the concurrency queue starts the next job when this one ends, so there is no gap. With no gold rule in
+# trader/fx/alerts.json it makes no call to the data provider (free quota: 800 calls per day).
+# The 15-minute alert server (alerts.yml) stays on as the fallback. Orders are always placed by hand.
+# The deduplication state lives in the same Actions cache as alerts.yml; secrets are read through env only.
+name: Live gold
+
+on:
+  schedule:
+    - cron: "3 7-21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Afficher les messages sans rien envoyer (un seul tour)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-gold
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore the alert state
+        uses: actions/cache/restore@v5
+        with:
+          path: trader/fx/alerts_state.json
+          key: alerts-state-${{ github.run_id }}
+          restore-keys: alerts-state-
+      - name: Watch gold
+        id: run
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 .claude/skills/trader-fx/live_gold.py --dry-run --once
+          else
+            python3 .claude/skills/trader-fx/live_gold.py
+          fi
+      - name: Save the alert state
+        if: ${{ always() && steps.run.outputs.state_changed == 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: trader/fx/alerts_state.json
+          key: alerts-state-${{ github.run_id }}
